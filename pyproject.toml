@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "Advanced Windows AI Assistant with local LLM support"
+requires-python = ">=3.9"
+dependencies = [
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0.0",
+    "pypdf>=3.0",
+    "ollama>=0.1.0",
+    "customtkinter>=5.0",
+    "requests>=2.28.0",
+    "pyautogui>=0.9.53",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "isort>=5.0",
+    "flake8>=6.0",
+    "mypy>=1.0",
+    "pytest-mock>=3.10",
+]
+
+[project.scripts]
+jarvis = "jarvis.cli:main"
+
+[tool.setuptools]
+packages = ["jarvis"]
+package-dir = {"" = "src"}
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "--cov=src/jarvis --cov-report=term-missing --cov-report=html"
+
+[tool.coverage.run]
+source = ["src/jarvis"]
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py39']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true

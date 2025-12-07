@@ -104,6 +104,7 @@ class SubprocessActions:
                         "success": result.returncode == 0,
                     },
                     error=stderr if result.returncode != 0 else None,
+                    execution_time_ms=0.0,
                 )
             else:
                 # For non-captured output, run without capture
@@ -117,6 +118,7 @@ class SubprocessActions:
                     success=process.returncode == 0,
                     action_type="execute_command",
                     message=f"Command executed with return code {process.returncode}",
+                    execution_time_ms=0.0,
                     data={
                         "command": command,
                         "shell": shell,

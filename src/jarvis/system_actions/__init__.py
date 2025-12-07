@@ -94,8 +94,8 @@ class SystemActionRouter:
             logger.info(f"File actions module available: {self.files}")
 
             if action_type == "file_list":
-                directory = kwargs.get("directory")
-                recursive = kwargs.get("recursive", False)
+                directory = kwargs.get("directory", ".")
+                recursive = bool(kwargs.get("recursive", False))
                 logger.info(
                     f"Calling files.list_files(directory={directory}, " f"recursive={recursive})"
                 )
@@ -105,8 +105,8 @@ class SystemActionRouter:
                 )
                 return result
             elif action_type == "file_create":
-                file_path = kwargs.get("file_path")
-                content = kwargs.get("content", "")
+                file_path = str(kwargs.get("file_path", ""))
+                content = str(kwargs.get("content", ""))
                 logger.info(
                     f"Calling files.create_file(file_path={file_path}, "
                     f"content_length={len(content)})"
@@ -117,22 +117,24 @@ class SystemActionRouter:
                 )
                 return result
             elif action_type == "file_delete":
-                logger.info(f"Calling files.delete_file(file_path={kwargs.get('file_path')})")
-                result = self.files.delete_file(file_path=kwargs.get("file_path"))
+                file_path = str(kwargs.get("file_path", ""))
+                logger.info(f"Calling files.delete_file(file_path={file_path})")
+                result = self.files.delete_file(file_path=file_path)
                 logger.info(
                     f"delete_file result: success={result.success}, message={result.message}"
                 )
                 return result
             elif action_type == "file_delete_directory":
-                logger.info(f"Calling files.delete_directory(directory={kwargs.get('directory')})")
-                result = self.files.delete_directory(directory=kwargs.get("directory"))
+                directory = str(kwargs.get("directory", ""))
+                logger.info(f"Calling files.delete_directory(directory={directory})")
+                result = self.files.delete_directory(directory=directory)
                 logger.info(
                     f"delete_directory result: success={result.success}, message={result.message}"
                 )
                 return result
             elif action_type == "file_move":
-                source = kwargs.get("source")
-                destination = kwargs.get("destination")
+                source = str(kwargs.get("source", ""))
+                destination = str(kwargs.get("destination", ""))
                 logger.info(
                     f"Calling files.move_file(source={source}, " f"destination={destination})"
                 )
@@ -142,8 +144,8 @@ class SystemActionRouter:
                 )
                 return result
             elif action_type == "file_copy":
-                source = kwargs.get("source")
-                destination = kwargs.get("destination")
+                source = str(kwargs.get("source", ""))
+                destination = str(kwargs.get("destination", ""))
                 logger.info(
                     f"Calling files.copy_file(source={source}, " f"destination={destination})"
                 )
@@ -151,8 +153,9 @@ class SystemActionRouter:
                 logger.info(f"copy_file result: success={result.success}, message={result.message}")
                 return result
             elif action_type == "file_get_info":
-                logger.info(f"Calling files.get_file_info(file_path={kwargs.get('file_path')})")
-                result = self.files.get_file_info(file_path=kwargs.get("file_path"))
+                file_path = str(kwargs.get("file_path", ""))
+                logger.info(f"Calling files.get_file_info(file_path={file_path})")
+                result = self.files.get_file_info(file_path=file_path)
                 logger.info(
                     f"get_file_info result: success={result.success}, message={result.message}"
                 )
@@ -167,16 +170,16 @@ class SystemActionRouter:
             elif action_type == "gui_capture_screen":
                 result = self.gui_control.capture_screen(region=kwargs.get("region"))
             elif action_type == "gui_move_mouse":
-                result = self.gui_control.move_mouse(
-                    x=kwargs.get("x"), y=kwargs.get("y"), duration=kwargs.get("duration", 0.5)
-                )
+                x = int(kwargs.get("x", 0))
+                y = int(kwargs.get("y", 0))
+                duration = float(kwargs.get("duration", 0.5))
+                result = self.gui_control.move_mouse(x=x, y=y, duration=duration)
             elif action_type == "gui_click_mouse":
-                result = self.gui_control.click_mouse(
-                    x=kwargs.get("x"),
-                    y=kwargs.get("y"),
-                    button=kwargs.get("button", "left"),
-                    clicks=kwargs.get("clicks", 1),
-                )
+                x = int(kwargs.get("x", 0))
+                y = int(kwargs.get("y", 0))
+                button = str(kwargs.get("button", "left"))
+                clicks = int(kwargs.get("clicks", 1))
+                result = self.gui_control.click_mouse(x=x, y=y, button=button, clicks=clicks)
             elif action_type == "gui_get_mouse_position":
                 result = self.gui_control.get_mouse_position()
             else:
@@ -190,17 +193,19 @@ class SystemActionRouter:
         # Typing operations
         elif action_type.startswith("typing_"):
             if action_type == "typing_type_text":
-                return self.typing.type_text(
-                    text=kwargs.get("text"), interval=kwargs.get("interval", 0.01)
-                )
+                text = str(kwargs.get("text", ""))
+                interval = float(kwargs.get("interval", 0.01))
+                return self.typing.type_text(text=text, interval=interval)
             elif action_type == "typing_press_key":
-                return self.typing.press_key(
-                    key=kwargs.get("key"), presses=kwargs.get("presses", 1)
-                )
+                key = str(kwargs.get("key", ""))
+                presses = int(kwargs.get("presses", 1))
+                return self.typing.press_key(key=key, presses=presses)
             elif action_type == "typing_hotkey":
-                return self.typing.hotkey(*kwargs.get("keys", []))
+                keys = kwargs.get("keys", [])
+                return self.typing.hotkey(*keys)
             elif action_type == "typing_copy_to_clipboard":
-                return self.typing.copy_to_clipboard(text=kwargs.get("text"))
+                text = str(kwargs.get("text", ""))
+                return self.typing.copy_to_clipboard(text=text)
             elif action_type == "typing_paste_from_clipboard":
                 return self.typing.paste_from_clipboard()
             elif action_type == "typing_get_clipboard_content":
@@ -211,32 +216,39 @@ class SystemActionRouter:
         # Registry operations
         elif action_type.startswith("registry_"):
             if action_type == "registry_list_subkeys":
-                return self.registry.list_subkeys(
-                    root_key=kwargs.get("root_key"), subkey_path=kwargs.get("subkey_path", "")
-                )
+                root_key = str(kwargs.get("root_key", ""))
+                subkey_path = str(kwargs.get("subkey_path", ""))
+                return self.registry.list_subkeys(root_key=root_key, subkey_path=subkey_path)
             elif action_type == "registry_list_values":
-                return self.registry.list_values(
-                    root_key=kwargs.get("root_key"), subkey_path=kwargs.get("subkey_path", "")
-                )
+                root_key = str(kwargs.get("root_key", ""))
+                subkey_path = str(kwargs.get("subkey_path", ""))
+                return self.registry.list_values(root_key=root_key, subkey_path=subkey_path)
             elif action_type == "registry_read_value":
+                root_key = str(kwargs.get("root_key", ""))
+                subkey_path = str(kwargs.get("subkey_path", ""))
+                value_name = str(kwargs.get("value_name", ""))
                 return self.registry.read_value(
-                    root_key=kwargs.get("root_key"),
-                    subkey_path=kwargs.get("subkey_path"),
-                    value_name=kwargs.get("value_name"),
+                    root_key=root_key, subkey_path=subkey_path, value_name=value_name
                 )
             elif action_type == "registry_write_value":
+                root_key = str(kwargs.get("root_key", ""))
+                subkey_path = str(kwargs.get("subkey_path", ""))
+                value_name = str(kwargs.get("value_name", ""))
+                value = kwargs.get("value")
+                value_type = str(kwargs.get("value_type", "REG_SZ"))
                 return self.registry.write_value(
-                    root_key=kwargs.get("root_key"),
-                    subkey_path=kwargs.get("subkey_path"),
-                    value_name=kwargs.get("value_name"),
-                    value=kwargs.get("value"),
-                    value_type=kwargs.get("value_type", "REG_SZ"),
+                    root_key=root_key,
+                    subkey_path=subkey_path,
+                    value_name=value_name,
+                    value=value,
+                    value_type=value_type,
                 )
             elif action_type == "registry_delete_value":
+                root_key = str(kwargs.get("root_key", ""))
+                subkey_path = str(kwargs.get("subkey_path", ""))
+                value_name = str(kwargs.get("value_name", ""))
                 return self.registry.delete_value(
-                    root_key=kwargs.get("root_key"),
-                    subkey_path=kwargs.get("subkey_path"),
-                    value_name=kwargs.get("value_name"),
+                    root_key=root_key, subkey_path=subkey_path, value_name=value_name
                 )
             else:
                 raise ValueError(f"Unknown registry action: {action_type}")
@@ -244,17 +256,17 @@ class SystemActionRouter:
         # OCR operations
         elif action_type.startswith("ocr_"):
             if action_type == "ocr_extract_from_image":
-                return self.ocr.extract_text_from_image(
-                    image_path=kwargs.get("image_path"), language=kwargs.get("language", "eng")
-                )
+                image_path = str(kwargs.get("image_path", ""))
+                language = str(kwargs.get("language", "eng"))
+                return self.ocr.extract_text_from_image(image_path=image_path, language=language)
             elif action_type == "ocr_extract_from_screen":
-                return self.ocr.extract_text_from_screen(
-                    region=kwargs.get("region"), language=kwargs.get("language", "eng")
-                )
+                region = kwargs.get("region")
+                language = str(kwargs.get("language", "eng"))
+                return self.ocr.extract_text_from_screen(region=region, language=language)
             elif action_type == "ocr_extract_with_boxes":
-                return self.ocr.extract_text_with_boxes(
-                    image_path=kwargs.get("image_path"), language=kwargs.get("language", "eng")
-                )
+                image_path = str(kwargs.get("image_path", ""))
+                language = str(kwargs.get("language", "eng"))
+                return self.ocr.extract_text_with_boxes(image_path=image_path, language=language)
             elif action_type == "ocr_get_available_languages":
                 return self.ocr.get_available_languages()
             elif action_type == "ocr_windows_from_screen":
@@ -265,25 +277,28 @@ class SystemActionRouter:
         # PowerShell operations
         elif action_type.startswith("powershell_"):
             if action_type == "powershell_execute":
+                command = str(kwargs.get("command", ""))
+                capture_output = bool(kwargs.get("capture_output", True))
+                shell = bool(kwargs.get("shell", False))
                 result = self.powershell.execute_command(
-                    command=kwargs.get("command"),
-                    capture_output=kwargs.get("capture_output", True),
-                    shell=kwargs.get("shell", False),
+                    command=command, capture_output=capture_output, shell=shell
                 )
             elif action_type == "powershell_execute_script":
-                result = self.powershell.execute_script(script_content=kwargs.get("script_content"))
+                script_content = str(kwargs.get("script_content", ""))
+                result = self.powershell.execute_script(script_content=script_content)
             elif action_type == "powershell_get_system_info":
                 result = self.powershell.get_system_info()
             elif action_type == "powershell_get_processes":
                 result = self.powershell.get_running_processes()
             elif action_type == "powershell_get_services":
-                result = self.powershell.get_services(status=kwargs.get("status", "running"))
+                status = str(kwargs.get("status", "running"))
+                result = self.powershell.get_services(status=status)
             elif action_type == "powershell_get_programs":
                 result = self.powershell.get_installed_programs()
             elif action_type == "powershell_check_file_hash":
-                result = self.powershell.check_file_hash(
-                    file_path=kwargs.get("file_path"), algorithm=kwargs.get("algorithm", "SHA256")
-                )
+                file_path = str(kwargs.get("file_path", ""))
+                algorithm = str(kwargs.get("algorithm", "SHA256"))
+                result = self.powershell.check_file_hash(file_path=file_path, algorithm=algorithm)
             else:
                 raise ValueError(f"Unknown PowerShell action: {action_type}")
 
@@ -295,32 +310,39 @@ class SystemActionRouter:
         # Subprocess operations
         elif action_type.startswith("subprocess_"):
             if action_type == "subprocess_execute":
+                command = kwargs.get("command", "")
+                shell = bool(kwargs.get("shell", True))
+                capture_output = bool(kwargs.get("capture_output", True))
+                working_directory = kwargs.get("working_directory")
+                env = kwargs.get("env")
                 result = self.subprocess.execute_command(
-                    command=kwargs.get("command"),
-                    shell=kwargs.get("shell", True),
-                    capture_output=kwargs.get("capture_output", True),
-                    working_directory=kwargs.get("working_directory"),
-                    env=kwargs.get("env"),
+                    command=command,
+                    shell=shell,
+                    capture_output=capture_output,
+                    working_directory=working_directory,
+                    env=env,
                 )
             elif action_type == "subprocess_open_application":
+                application_path = str(kwargs.get("application_path", ""))
+                arguments = kwargs.get("arguments")
                 result = self.subprocess.open_application(
-                    application_path=kwargs.get("application_path"),
-                    arguments=kwargs.get("arguments"),
+                    application_path=application_path, arguments=arguments
                 )
             elif action_type == "subprocess_ping":
-                result = self.subprocess.ping_host(
-                    host=kwargs.get("host"), count=kwargs.get("count", 4)
-                )
+                host = str(kwargs.get("host", ""))
+                count = int(kwargs.get("count", 4))
+                result = self.subprocess.ping_host(host=host, count=count)
             elif action_type == "subprocess_get_network":
                 result = self.subprocess.get_network_interfaces()
             elif action_type == "subprocess_get_disk_usage":
-                result = self.subprocess.get_disk_usage(path=kwargs.get("path", "."))
+                path = str(kwargs.get("path", "."))
+                result = self.subprocess.get_disk_usage(path=path)
             elif action_type == "subprocess_get_environment":
                 result = self.subprocess.get_environment_variables()
             elif action_type == "subprocess_kill_process":
-                result = self.subprocess.kill_process(
-                    process_id=kwargs.get("process_id"), force=kwargs.get("force", False)
-                )
+                process_id = int(kwargs.get("process_id", 0))
+                force = bool(kwargs.get("force", False))
+                result = self.subprocess.kill_process(process_id=process_id, force=force)
             elif action_type == "subprocess_list_processes":
                 result = self.subprocess.list_processes()
             else:

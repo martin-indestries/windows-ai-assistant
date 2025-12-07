@@ -6,9 +6,8 @@ allow/deny lists and dry-run semantics.
 """
 
 import logging
-import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 from jarvis.action_executor import ActionExecutor, ActionResult
 
@@ -33,26 +32,32 @@ class FileActions:
         self.action_executor = action_executor
         logger.info("FileActions initialized")
 
-    def _create_result(self, success: bool, action_type: str, message: str, 
-                     data: Optional[Dict[str, Any]] = None, error: Optional[str] = None,
-                     start_time: Optional[float] = None) -> ActionResult:
+    def _create_result(
+        self,
+        success: bool,
+        action_type: str,
+        message: str,
+        data: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+        start_time: Optional[float] = None,
+    ) -> ActionResult:
         """Create ActionResult with execution time."""
+        import time
+
         execution_time = 0.0
         if start_time is not None:
             execution_time = (time.time() - start_time) * 1000  # Convert to ms
-        
+
         return ActionResult(
             success=success,
             action_type=action_type,
             message=message,
             data=data,
             error=error,
-            execution_time_ms=execution_time
+            execution_time_ms=execution_time,
         )
 
-    def list_files(
-        self, directory: Union[str, Path], recursive: bool = False
-    ) -> ActionResult:
+    def list_files(self, directory: Union[str, Path], recursive: bool = False) -> ActionResult:
         """
         List files in a directory.
 
@@ -63,13 +68,10 @@ class FileActions:
         Returns:
             ActionResult with file list or error
         """
-        start_time = time.time()
         logger.info(f"Listing files in {directory} (recursive={recursive})")
-        return self.action_executor.list_files(directory, recursive)
+        return self.action_executor.list_files(directory=directory, recursive=recursive)
 
-    def create_file(
-        self, file_path: Union[str, Path], content: str = ""
-    ) -> ActionResult:
+    def create_file(self, file_path: Union[str, Path], content: str = "") -> ActionResult:
         """
         Create a file with optional content.
 
@@ -109,9 +111,7 @@ class FileActions:
         logger.info(f"Deleting directory {directory}")
         return self.action_executor.delete_directory(directory)
 
-    def move_file(
-        self, source: Union[str, Path], destination: Union[str, Path]
-    ) -> ActionResult:
+    def move_file(self, source: Union[str, Path], destination: Union[str, Path]) -> ActionResult:
         """
         Move or rename a file.
 
@@ -125,9 +125,7 @@ class FileActions:
         logger.info(f"Moving file {source} to {destination}")
         return self.action_executor.move_file(source, destination)
 
-    def copy_file(
-        self, source: Union[str, Path], destination: Union[str, Path]
-    ) -> ActionResult:
+    def copy_file(self, source: Union[str, Path], destination: Union[str, Path]) -> ActionResult:
         """
         Copy a file.
 
@@ -154,13 +152,14 @@ class FileActions:
         logger.info(f"Getting file info for {file_path}")
         try:
             path = Path(file_path).expanduser().resolve()
-            
+
             if not self.action_executor._check_path_allowed(path):
                 return ActionResult(
                     success=False,
                     action_type="get_file_info",
                     message=f"Path {file_path} is not allowed",
-                    error="Path access denied by safety rules"
+                    error="Path access denied by safety rules",
+                    execution_time_ms=0.0,
                 )
 
             if not path.exists():
@@ -168,7 +167,8 @@ class FileActions:
                     success=False,
                     action_type="get_file_info",
                     message=f"File {file_path} does not exist",
-                    error="File not found"
+                    error="File not found",
+                    execution_time_ms=0.0,
                 )
 
             stat = path.stat()
@@ -186,7 +186,8 @@ class FileActions:
                 success=True,
                 action_type="get_file_info",
                 message=f"Retrieved info for {file_path}",
-                data=info
+                data=info,
+                execution_time_ms=0.0,
             )
 
         except Exception as e:
@@ -195,5 +196,6 @@ class FileActions:
                 success=False,
                 action_type="get_file_info",
                 message=f"Failed to get info for {file_path}",
-                error=str(e)
+                error=str(e),
+                execution_time_ms=0.0,
             )

@@ -142,7 +142,7 @@ class TestFileActions:
         result = actions.list_files("/tmp", recursive=True)
 
         assert result.success is True
-        mock_executor.list_files.assert_called_once_with("/tmp", recursive=True)
+        mock_executor.list_files.assert_called_once_with(directory="/tmp", recursive=True)
 
     def test_get_file_info(self):
         """Test getting file info."""

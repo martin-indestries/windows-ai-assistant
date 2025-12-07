@@ -4,6 +4,7 @@ Tests for orchestrator integration with system actions.
 Tests the plan execution flow through the SystemActionRouter.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 from jarvis.action_executor import ActionResult
@@ -52,6 +53,7 @@ class TestOrchestratorIntegration:
             user_input="test input",
             description="test plan",
             steps=[PlanStep(step_number=1, description="Test step", required_tools=["file"])],
+            generated_at=datetime.now(timezone.utc).isoformat(),
         )
 
         result = orchestrator.execute_plan(plan)
@@ -90,6 +92,7 @@ class TestOrchestratorIntegration:
                     required_tools=["file"],
                 )
             ],
+            generated_at=datetime.now(timezone.utc).isoformat(),
         )
 
         result = orchestrator.execute_plan(plan)
@@ -133,6 +136,7 @@ class TestOrchestratorIntegration:
                     dependencies=[1],
                 ),
             ],
+            generated_at=datetime.now(timezone.utc).isoformat(),
         )
 
         result = orchestrator.execute_plan(plan)
@@ -185,6 +189,7 @@ class TestOrchestratorIntegration:
                     dependencies=[1],
                 ),
             ],
+            generated_at=datetime.now(timezone.utc).isoformat(),
         )
 
         result = orchestrator.execute_plan(plan)
@@ -231,6 +236,7 @@ class TestOrchestratorIntegration:
                     step_number=2, description="Run another command", required_tools=["powershell"]
                 ),
             ],
+            generated_at=datetime.now(timezone.utc).isoformat(),
         )
 
         result = orchestrator.execute_plan(plan)

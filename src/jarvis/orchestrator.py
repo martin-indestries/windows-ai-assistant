@@ -100,7 +100,7 @@ class Orchestrator:
             # Check dependencies
             if step.dependencies:
                 deps_met = all(
-                    any(r.step_number == dep and r.success for r in results)
+                    any(r.get("step_number") == dep and r.get("success") for r in results)
                     for dep in step.dependencies
                 )
                 if not deps_met:
@@ -198,7 +198,20 @@ class Orchestrator:
                     "action_type": action_type,
                     "params": params,
                 }
+            elif params.get("_informational"):
+                # action_type is None but marked as informational/planning step
+                logger.info(
+                    f"Step {step.step_number} is informational/planning, marking as completed"
+                )
+                return {
+                    "step_number": step.step_number,
+                    "description": step.description,
+                    "success": True,
+                    "message": "Informational/planning step completed",
+                    "data": None,
+                }
             else:
+                # action_type is None and couldn't be parsed
                 logger.warning(f"Could not parse action from description: {step.description}")
                 return {
                     "step_number": step.step_number,
@@ -394,6 +407,43 @@ class Orchestrator:
                 logger.info(f"Parsed gui_move_mouse action: x={x}, y={y}")
                 return "gui_move_mouse", {"x": x, "y": y}
 
+        # Application launch operations (before PowerShell/subprocess to catch specific apps)
+        if any(keyword in description_lower for keyword in ["open", "launch", "start", "run"]):
+            # Common Windows applications mapping
+            app_patterns = {
+                r"notepad": "notepad.exe",
+                r"calculator|calc": "calc.exe",
+                r"paint": "mspaint.exe",
+                r"explorer|file explorer|windows explorer": "explorer.exe",
+                r"cmd|command prompt": "cmd.exe",
+                r"powershell": "powershell.exe",
+                r"task manager|taskmgr": "taskmgr.exe",
+                r"control panel": "control.exe",
+                r"settings": "ms-settings:",
+                r"snipping tool": "snippingtool.exe",
+                r"wordpad": "write.exe",
+                r"registry editor|regedit": "regedit.exe",
+                r"character map|charmap": "charmap.exe",
+            }
+
+            for pattern, app_path in app_patterns.items():
+                if re.search(pattern, description_lower):
+                    logger.info(f"Parsed application launch: {app_path}")
+                    return "subprocess_open_application", {"application_path": app_path}
+
+            # Try to extract application name from quotes or after "open/launch/start/run"
+            app_match = re.search(
+                r'(?:open|launch|start|run)\s+["\']?([a-zA-Z0-9_\-\.]+(?:\.exe)?)["\']?',
+                description_lower,
+                re.IGNORECASE,
+            )
+            if app_match:
+                app_name = app_match.group(1)
+                if not app_name.endswith(".exe"):
+                    app_name += ".exe"
+                logger.info(f"Parsed generic application launch: {app_name}")
+                return "subprocess_open_application", {"application_path": app_name}
+
         # PowerShell operations
         if "powershell" in tool.lower():
             # Try to extract command
@@ -451,6 +501,50 @@ class Orchestrator:
         if "registry" in tool.lower():
             logger.info("Parsed registry_list_values action")
             return "registry_list_values", {"root_key": "HKEY_CURRENT_USER", "subkey_path": ""}
+
+        # Fallback for generic descriptions - try to infer intent from keywords
+        logger.info("Attempting fallback parsing for generic description")
+
+        # Check for response/message operations (informational steps)
+        if any(
+            keyword in description_lower
+            for keyword in ["prepare", "format", "response", "reply", "answer", "message"]
+        ):
+            logger.info("Parsed as informational step (no action needed)")
+            return None, {"_informational": True}
+
+        # Check for thinking/planning operations (no action needed)
+        if any(
+            keyword in description_lower
+            for keyword in [
+                "analyze",
+                "consider",
+                "determine",
+                "decide",
+                "think",
+                "plan",
+                "verify",
+                "check status",
+            ]
+        ):
+            logger.info("Parsed as planning/thinking step (no action needed)")
+            return None, {"_informational": True}
+
+        # If we have a tool hint but couldn't parse, try to make a reasonable guess
+        if tool:
+            tool_lower = tool.lower()
+            if "file" in tool_lower:
+                # Default to listing files
+                logger.info("Fallback to file_list action based on tool hint")
+                return "file_list", {"directory": ".", "recursive": False}
+            elif "gui" in tool_lower:
+                # Default to getting screen info
+                logger.info("Fallback to gui_get_screen_size action based on tool hint")
+                return "gui_get_screen_size", {}
+            elif "powershell" in tool_lower:
+                # Default to getting system info
+                logger.info("Fallback to powershell_get_system_info action based on tool hint")
+                return "powershell_get_system_info", {}
 
         logger.warning(f"Could not parse action from description: {description}")
         return None, {}

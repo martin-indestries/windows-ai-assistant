@@ -9,7 +9,7 @@ import logging
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 from jarvis.storage_backend import MemoryEntry, StorageBackend
 
@@ -81,7 +81,7 @@ class SQLiteBackend(StorageBackend):
     def _get_connection(self) -> sqlite3.Connection:
         """Get or create database connection."""
         if self.connection is None:
-            self.connection = sqlite3.connect(str(self.db_path))
+            self.connection = sqlite3.connect(str(self.db_path), check_same_thread=False)
             self.connection.row_factory = sqlite3.Row
         return self.connection
 

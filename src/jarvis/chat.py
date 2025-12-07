@@ -380,7 +380,35 @@ class ChatSession:
             yield "[Executing...]\n"
             full_response_parts.append("[Executing...]\n")
 
-            result = self.orchestrator.handle_command(user_input)
+            # Execute plan if we have one and system action router is available
+            result = None
+            if (
+                plan
+                and hasattr(self.orchestrator, "system_action_router")
+                and self.orchestrator.system_action_router
+            ):
+                try:
+                    logger.info("Executing plan through system action router")
+                    execution_result = self.orchestrator.execute_plan(plan)
+                    result = {
+                        "status": "success",
+                        "command": user_input,
+                        "plan_execution": execution_result,
+                    }
+                except Exception as e:
+                    logger.error(f"Failed to execute plan: {e}")
+                    result = {
+                        "status": "error",
+                        "command": user_input,
+                        "message": f"Plan execution failed: {str(e)}",
+                        "plan_execution_error": str(e),
+                    }
+            else:
+                # Fallback to generic handle_command (will return generic message)
+                logger.warning(
+                    "No plan or system action router available, using handle_command fallback"
+                )
+                result = self.orchestrator.handle_command(user_input)
 
             if result:
                 result_text = self._format_result(result)

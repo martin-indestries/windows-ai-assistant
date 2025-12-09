@@ -9,7 +9,6 @@ Handles loading settings from YAML/JSON files with support for:
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -44,7 +43,10 @@ class BrainLLMConfig(BaseModel):
         default="http://localhost:11434", description="Base URL for provider"
     )
     temperature: float = Field(
-        default=0.5, ge=0.0, le=2.0, description="Lower temperature for more deterministic reasoning"
+        default=0.5,
+        ge=0.0,
+        le=2.0,
+        description="Lower temperature for more deterministic reasoning",
     )
     max_tokens: int = Field(default=4096, ge=1, description="Larger token limit for detailed plans")
     timeout: int = Field(
@@ -54,9 +56,7 @@ class BrainLLMConfig(BaseModel):
     num_gpu: int = Field(
         default=1, ge=0, description="Number of GPU layers to use (0 for CPU-only)"
     )
-    num_thread: int = Field(
-        default=8, ge=1, description="Number of CPU threads for inference"
-    )
+    num_thread: int = Field(default=8, ge=1, description="Number of CPU threads for inference")
     num_ctx: int = Field(default=8192, ge=1, description="Context window size")
     cpu_ram_gb: int = Field(
         default=64, ge=1, description="Recommended CPU RAM in GB (for resource planning)"
@@ -86,9 +86,7 @@ class ExecutorLLMConfig(BaseModel):
     num_gpu: int = Field(
         default=1, ge=0, description="Number of GPU layers to use (0 for CPU-only)"
     )
-    num_thread: int = Field(
-        default=4, ge=1, description="Number of CPU threads for inference"
-    )
+    num_thread: int = Field(default=4, ge=1, description="Number of CPU threads for inference")
     num_ctx: int = Field(default=4096, ge=1, description="Context window size")
     cpu_ram_gb: int = Field(
         default=16, ge=1, description="Recommended CPU RAM in GB (for resource planning)"
@@ -136,14 +134,26 @@ class ExecutionConfig(BaseModel):
     )
     dry_run: bool = Field(default=False, description="Preview actions without executing")
     action_timeout: int = Field(default=30, ge=1, description="Timeout for actions in seconds")
+    # Verification and retry configuration
+    enable_verification: bool = Field(
+        default=True, description="Enable side-effect verification after actions"
+    )
+    max_retries: int = Field(
+        default=3, ge=0, le=10, description="Maximum number of retry attempts on failure"
+    )
+    retry_backoff_seconds: float = Field(
+        default=1.0, ge=0.1, le=60.0, description="Base backoff time between retries (exponential)"
+    )
+    retry_alternatives: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Fallback action mappings (e.g., file_create -> powershell_execute)",
+    )
 
 
 class OCRConfig(BaseModel):
     """Configuration for OCR operations."""
 
-    tesseract_path: Optional[str] = Field(
-        default=None, description="Path to tesseract executable"
-    )
+    tesseract_path: Optional[str] = Field(default=None, description="Path to tesseract executable")
     default_language: str = Field(default="eng", description="Default OCR language")
     confidence_threshold: float = Field(
         default=60.0, ge=0.0, le=100.0, description="OCR confidence threshold"

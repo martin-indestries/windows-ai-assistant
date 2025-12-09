@@ -825,6 +825,13 @@ execution:
     - /sys
   dry_run: false
   action_timeout: 30
+  # Verification and retry settings
+  enable_verification: true      # Verify side effects after actions
+  max_retries: 3                 # Maximum retry attempts on failure
+  retry_backoff_seconds: 1.0     # Base backoff time (exponential)
+  retry_alternatives:            # Optional fallback action mappings
+    file_create: powershell_execute
+    file_delete: powershell_execute
 
 # OCR settings
 ocr:
@@ -840,6 +847,9 @@ ocr:
 - **Timeout protection**: Prevent hanging operations
 - **Structured results**: All actions return `ActionResult` objects
 - **Error handling**: Graceful failure with actionable error messages
+- **Side-effect verification**: Verify actions actually completed (files exist, etc.)
+- **Automatic retries**: Exponential backoff retry on execution/verification failure
+- **Alternative actions**: Fallback to secondary action methods when primary fails
 
 ### Dependencies
 

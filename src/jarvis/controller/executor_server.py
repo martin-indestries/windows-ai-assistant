@@ -2,6 +2,7 @@
 Executor server module for the dual-model controller.
 
 Wraps the action executor to provide step execution capabilities for the controller.
+Includes verification of side effects to ensure actions completed successfully.
 """
 
 import json
@@ -9,6 +10,7 @@ import logging
 from typing import Any, Dict, Generator, Optional
 
 from jarvis.action_executor import ActionExecutor, ActionResult
+from jarvis.controller.step_verifier import StepVerifier, VerificationResult
 from jarvis.reasoning import PlanStep
 
 logger = logging.getLogger(__name__)
@@ -19,28 +21,42 @@ class ExecutorServer:
     Server wrapper for the action executor.
 
     Provides step execution capabilities and synthesizes concrete commands/code.
+    Optionally verifies side effects after execution.
     """
 
-    def __init__(self, action_executor: ActionExecutor) -> None:
+    def __init__(
+        self,
+        action_executor: ActionExecutor,
+        enable_verification: bool = True,
+    ) -> None:
         """
         Initialize the executor server.
 
         Args:
             action_executor: ActionExecutor instance for command execution
+            enable_verification: Whether to verify side effects after execution
         """
         self.action_executor = action_executor
+        self.enable_verification = enable_verification
+        self._verifier = StepVerifier() if enable_verification else None
         self._last_result: Optional[Dict[str, Any]] = None
-        logger.info("ExecutorServer initialized")
+        self._last_verification: Optional[VerificationResult] = None
+        verification_status = "enabled" if enable_verification else "disabled"
+        logger.info(f"ExecutorServer initialized (verification={verification_status})")
 
     def execute_step(
-        self, step: PlanStep, context: Optional[Dict[str, Any]] = None
+        self,
+        step: PlanStep,
+        context: Optional[Dict[str, Any]] = None,
+        action_params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Execute a single plan step.
+        Execute a single plan step with optional verification.
 
         Args:
             step: PlanStep to execute
             context: Optional context from previous steps
+            action_params: Optional action parameters for verification
 
         Returns:
             Dictionary with execution result including:
@@ -50,12 +66,15 @@ class ExecutorServer:
             - data: optional structured data
             - error: optional error message
             - execution_time_ms: float
+            - verified: bool (if verification enabled)
+            - verification_message: str (if verification enabled)
         """
         logger.info(
             f"ExecutorServer.execute_step() for step {step.step_number}: {step.description}"
         )
 
         context = context or {}
+        action_params = action_params or {}
 
         try:
             # Parse the step description to determine what action to execute
@@ -70,6 +89,29 @@ class ExecutorServer:
                 "execution_time_ms": action_result.execution_time_ms,
             }
 
+            # Perform verification if enabled and execution succeeded
+            if self._verifier and action_result.success:
+                verification = self._verify_action(
+                    action_result.action_type,
+                    action_result.data,
+                    action_params,
+                )
+                self._last_verification = verification
+                result_dict["verified"] = verification.verified
+                result_dict["verification_message"] = verification.message
+
+                # If verification failed, mark the overall result as failed
+                if not verification.verified:
+                    result_dict["success"] = False
+                    result_dict["error"] = verification.error or verification.message
+                    logger.warning(
+                        f"Step {step.step_number} verification failed: {verification.message}"
+                    )
+            elif self._verifier:
+                # Execution failed, skip verification
+                result_dict["verified"] = False
+                result_dict["verification_message"] = "Skipped (execution failed)"
+
             logger.info(f"Step {step.step_number} execution result: {result_dict}")
             return result_dict
 
@@ -82,17 +124,23 @@ class ExecutorServer:
                 "data": None,
                 "error": str(e),
                 "execution_time_ms": 0.0,
+                "verified": False,
+                "verification_message": "Skipped (execution error)",
             }
 
     def execute_step_stream(
-        self, step: PlanStep, context: Optional[Dict[str, Any]] = None
+        self,
+        step: PlanStep,
+        context: Optional[Dict[str, Any]] = None,
+        action_params: Optional[Dict[str, Any]] = None,
     ) -> Generator[str, None, None]:
         """
-        Execute a single plan step with streaming output.
+        Execute a single plan step with streaming output and verification.
 
         Args:
             step: PlanStep to execute
             context: Optional context from previous steps
+            action_params: Optional action parameters for verification
 
         Yields:
             Output strings from the execution (includes a final JSON result string)
@@ -102,6 +150,7 @@ class ExecutorServer:
         )
 
         context = context or {}
+        action_params = action_params or {}
 
         yield f"⚙️  Executing step {step.step_number}: {step.description}\n"
 
@@ -124,6 +173,31 @@ class ExecutorServer:
             if action_result.data:
                 yield f"  Data: {json.dumps(action_result.data, indent=2)}\n"
 
+            # Perform verification if enabled and execution succeeded
+            if self._verifier and action_result.success:
+                yield "  🔍 Verifying action...\n"
+                verification = self._verify_action(
+                    action_result.action_type,
+                    action_result.data,
+                    action_params,
+                )
+                self._last_verification = verification
+                result_dict["verified"] = verification.verified
+                result_dict["verification_message"] = verification.message
+
+                if verification.verified:
+                    yield f"  ✅ Verification passed: {verification.message}\n"
+                else:
+                    yield f"  ❌ Verification failed: {verification.message}\n"
+                    result_dict["success"] = False
+                    result_dict["error"] = verification.error or verification.message
+                    logger.warning(
+                        f"Step {step.step_number} verification failed: {verification.message}"
+                    )
+            elif self._verifier:
+                result_dict["verified"] = False
+                result_dict["verification_message"] = "Skipped (execution failed)"
+
             logger.info(f"Step {step.step_number} stream execution completed")
 
             # Store the result so it can be retrieved later
@@ -140,6 +214,8 @@ class ExecutorServer:
                 "data": None,
                 "error": str(e),
                 "execution_time_ms": 0.0,
+                "verified": False,
+                "verification_message": "Skipped (execution error)",
             }
             self._last_result = result_dict
 
@@ -151,6 +227,42 @@ class ExecutorServer:
             Last execution result dictionary or None
         """
         return self._last_result
+
+    def get_last_verification(self) -> Optional[VerificationResult]:
+        """
+        Get the verification result from the last execution.
+
+        Returns:
+            Last verification result or None
+        """
+        return self._last_verification
+
+    def _verify_action(
+        self,
+        action_type: str,
+        result_data: Optional[Dict[str, Any]],
+        action_params: Optional[Dict[str, Any]] = None,
+    ) -> VerificationResult:
+        """
+        Verify the side effects of an action.
+
+        Args:
+            action_type: Type of action performed
+            result_data: Data returned from the action
+            action_params: Original parameters for the action
+
+        Returns:
+            VerificationResult indicating if verification passed
+        """
+        if not self._verifier:
+            return VerificationResult(
+                verified=True,
+                action_type=action_type,
+                message="Verification disabled",
+                details={"skipped": True},
+            )
+
+        return self._verifier.verify(action_type, result_data, action_params)
 
     def _synthesize_and_execute(self, step: PlanStep, context: Dict[str, Any]) -> ActionResult:
         """

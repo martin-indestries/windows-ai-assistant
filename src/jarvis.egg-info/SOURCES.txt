@@ -30,3 +30,4 @@ src/jarvis.egg-info/top_level.txt
 tests/test_action_executor.py
 tests/test_chat.py
 tests/test_cli.py
+tests/test_reasoning_tool_enforcement.py

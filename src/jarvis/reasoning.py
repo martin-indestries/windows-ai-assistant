@@ -380,7 +380,7 @@ Return only valid JSON, no other text.
                     top_k=3,
                 )
                 logger.debug("Prompt enriched with RAG knowledge")
-                return prompt
+                return str(prompt)
             except Exception as e:
                 logger.warning(f"Failed to enrich prompt with RAG: {e}")
                 return base_prompt

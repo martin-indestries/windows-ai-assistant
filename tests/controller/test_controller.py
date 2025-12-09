@@ -149,12 +149,10 @@ class TestExecutorServer:
         )
 
         chunks = []
-        result_dict = {}
 
         gen = server.execute_step_stream(step)
         for chunk in gen:
             chunks.append(chunk)
-        result_dict = next(gen, {})
 
         assert len(chunks) > 0
         assert any("Executing" in chunk for chunk in chunks)
@@ -480,12 +478,10 @@ class TestController:
         controller = Controller(mock_reasoning_module, mock_action_executor)
 
         chunks = []
-        result = None
 
         gen = controller.process_command_stream("test command")
         for chunk in gen:
             chunks.append(chunk)
-        result = next(gen, None)
 
         # Should have output
         assert len(chunks) > 0
@@ -519,7 +515,7 @@ class TestController:
 
         controller.subscribe_to_step_events(callback)
 
-        result = controller.process_command("test command")
+        controller.process_command("test command")
 
         controller.unsubscribe_from_step_events(callback)
 

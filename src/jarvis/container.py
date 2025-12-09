@@ -6,7 +6,7 @@ loosely coupled and independently testable.
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from jarvis.action_executor import ActionExecutor
 from jarvis.brain.server import BrainServer, BrainServerError
@@ -134,7 +134,7 @@ class Container:
         self._tool_teaching_module: Optional[ToolTeachingModule] = None
         self._reasoning_module: Optional[ReasoningModule] = None
         self._action_executor: Optional[ActionExecutor] = None
-        self._system_action_router = None
+        self._system_action_router: Optional[Any] = None
         self._dual_model_manager: Optional[DualModelManager] = None
 
     def get_config_loader(self, config_path: Optional[str] = None) -> ConfigLoader:

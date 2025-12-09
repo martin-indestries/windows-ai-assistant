@@ -5,12 +5,10 @@ Tests that all plan steps have required_tools populated via post-processing
 and that fallback plans use concrete tool names.
 """
 
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from jarvis.config import JarvisConfig
 from jarvis.llm_client import LLMClient
 from jarvis.reasoning import PlanStep, ReasoningModule, SafetyFlag
 

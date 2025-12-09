@@ -8,7 +8,7 @@ import logging
 from typing import Any, Dict, Generator, List, Optional
 
 from jarvis.controller.executor_server import ExecutorServer
-from jarvis.reasoning import Plan, PlanStep, StepStatus
+from jarvis.reasoning import Plan
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +89,13 @@ class Dispatcher:
             List of step outcomes
         """
         logger.info(f"Dispatcher.dispatch() for plan {plan.plan_id} with {len(plan.steps)} steps")
-        
+
         self.step_outcomes = []
         context = {}
-        
+
         for step in plan.steps:
             result = self.executor_server.execute_step(step, context)
-            
+
             outcome = StepOutcome(
                 step_number=step.step_number,
                 step_description=step.description,
@@ -105,18 +105,18 @@ class Dispatcher:
                 error=result.get("error"),
                 execution_time_ms=result.get("execution_time_ms", 0.0),
             )
-            
+
             self.step_outcomes.append(outcome)
             self._emit_step_status(outcome)
-            
+
             if result.get("success") and result.get("data"):
                 context[f"step_{step.step_number}_result"] = result.get("data")
-            
+
             if not result.get("success"):
                 logger.warning(f"Step {step.step_number} failed: {result.get('error')}")
                 if "fatal" in str(result.get("error", "")).lower():
                     break
-        
+
         logger.info(f"Dispatch completed for plan {plan.plan_id}")
         return self.step_outcomes
 
@@ -124,28 +124,36 @@ class Dispatcher:
         """
         Dispatch and execute all steps in a plan with streaming output.
 
+        Yields progress for each step including execution start, results, and summaries.
+
         Args:
             plan: Plan to execute
 
         Yields:
-            Execution output strings
+            Execution output strings with step progress and verification events
 
         Returns:
             List of step outcomes
         """
-        logger.info(f"Dispatcher.dispatch_stream() for plan {plan.plan_id} with {len(plan.steps)} steps")
-        
+        logger.info(
+            f"Dispatcher.dispatch_stream() for plan {plan.plan_id} with {len(plan.steps)} steps"
+        )
+
         self.step_outcomes = []
         context = {}
-        
+
         for step in plan.steps:
             logger.debug(f"Dispatching step {step.step_number}")
-            
+
+            # Yield step start event
+            yield f"\n⚙️  Executing step {step.step_number}/{len(plan.steps)}: {step.description}\n"
+
+            # Stream the step execution
             for output_chunk in self.executor_server.execute_step_stream(step, context):
                 yield output_chunk
-            
+
             result = self.executor_server.get_last_result()
-            
+
             if result:
                 outcome = StepOutcome(
                     step_number=step.step_number,
@@ -156,18 +164,36 @@ class Dispatcher:
                     error=result.get("error"),
                     execution_time_ms=result.get("execution_time_ms", 0.0),
                 )
-                
+
                 self.step_outcomes.append(outcome)
                 self._emit_step_status(outcome)
-                
+
+                # Yield verification/outcome summary
+                status_emoji = "✓" if outcome.success else "✗"
+                status = "completed" if outcome.success else "failed"
+                yield f"{status_emoji} Step {step.step_number} {status}"
+                if outcome.execution_time_ms:
+                    yield f" ({outcome.execution_time_ms:.0f}ms)"
+                yield "\n"
+
                 if result.get("success") and result.get("data"):
                     context[f"step_{step.step_number}_result"] = result.get("data")
-                
+
                 if not result.get("success"):
                     logger.warning(f"Step {step.step_number} failed: {result.get('error')}")
                     if "fatal" in str(result.get("error", "")).lower():
                         break
-        
+
+        # Yield final summary
+        total_steps = len(self.step_outcomes)
+        successful_steps = sum(1 for o in self.step_outcomes if o.success)
+        failed_steps = total_steps - successful_steps
+
+        yield f"\n📊 Execution Summary: {successful_steps}/{total_steps} steps successful"
+        if failed_steps > 0:
+            yield f", {failed_steps} failed"
+        yield "\n"
+
         logger.info(f"Stream dispatch completed for plan {plan.plan_id}")
         return self.step_outcomes
 
@@ -213,9 +239,9 @@ class Dispatcher:
         total = len(self.step_outcomes)
         successful = sum(1 for o in self.step_outcomes if o.success)
         failed = total - successful
-        
+
         total_time_ms = sum(o.execution_time_ms for o in self.step_outcomes)
-        
+
         return {
             "total_steps": total,
             "successful": successful,

@@ -5,7 +5,7 @@ Wraps the reasoning module to provide planning capabilities for the controller.
 """
 
 import logging
-from typing import Generator, Optional
+from typing import Generator
 
 from jarvis.reasoning import Plan, ReasoningModule
 
@@ -49,6 +49,9 @@ class BrainServer:
         """
         Generate a plan from user input with streaming progress updates.
 
+        Uses the ReasoningModule's plan_actions_stream() generator to yield
+        progress events and capture the final Plan via generator completion.
+
         Args:
             user_input: User's natural language input
 
@@ -59,23 +62,30 @@ class BrainServer:
             Final Plan object
         """
         logger.info(f"BrainServer.plan_stream() called for: {user_input}")
-        
-        # Yield planning start message
-        yield "🧠 Planning...\n"
-        
-        # Generate the plan
-        plan = self.plan(user_input)
-        
-        # Yield plan summary
-        yield f"📋 Plan {plan.plan_id}: {plan.description}\n"
-        
-        # Yield step summaries
-        if plan.steps:
-            yield f"📌 {len(plan.steps)} steps identified:\n"
-            for step in plan.steps:
-                yield f"  {step.step_number}. {step.description}\n"
-        
-        # Yield safety info
-        yield f"🔒 Safe: {'✓' if plan.is_safe else '✗'}\n"
-        
-        return plan
+
+        # Get the streaming generator from reasoning module
+        try:
+            plan_gen = self.reasoning_module.plan_actions_stream(user_input)
+
+            # Consume the generator and yield all progress events
+            plan = None
+            try:
+                while True:
+                    event = next(plan_gen)
+                    yield event
+            except StopIteration as e:
+                # Capture the final Plan from StopIteration.value
+                plan = e.value
+                logger.debug(
+                    f"Plan generator completed with plan: {plan.plan_id if plan else 'None'}"
+                )
+
+            if plan is None:
+                raise ValueError("No plan returned from generator")
+
+            return plan
+
+        except Exception as e:
+            logger.exception(f"Error during plan streaming: {e}")
+            yield f"❌ Planning error: {str(e)}\n"
+            raise

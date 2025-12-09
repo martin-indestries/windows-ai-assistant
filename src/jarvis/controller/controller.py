@@ -81,32 +81,84 @@ class Controller:
         # Initialize servers
         self.brain_server = BrainServer(reasoning_module)
         self.executor_server = ExecutorServer(action_executor)
-        
+
         # Initialize planner and dispatcher
         self.planner = Planner(self.brain_server, memory_store)
         self.dispatcher = Dispatcher(self.executor_server)
-        
+
         self.memory_store = memory_store
-        
+
         # Action keywords for intent classification
         self._action_keywords = {
             # File operations
-            "create", "delete", "remove", "open", "close", "move", "copy", "rename", 
-            "list", "show", "get", "read", "write", "save", "find", "search",
-            # System operations  
-            "run", "execute", "start", "stop", "kill", "launch", "install", "uninstall",
-            "restart", "reboot", "shutdown",
+            "create",
+            "delete",
+            "remove",
+            "open",
+            "close",
+            "move",
+            "copy",
+            "rename",
+            "list",
+            "show",
+            "get",
+            "read",
+            "write",
+            "save",
+            "find",
+            "search",
+            # System operations
+            "run",
+            "execute",
+            "start",
+            "stop",
+            "kill",
+            "launch",
+            "install",
+            "uninstall",
+            "restart",
+            "reboot",
+            "shutdown",
             # GUI operations
-            "click", "move", "drag", "drop", "type", "press", "capture", "screenshot",
-            "scroll", "minimize", "maximize", "resize", "focus", "activate",
+            "click",
+            "move",
+            "drag",
+            "drop",
+            "type",
+            "press",
+            "capture",
+            "screenshot",
+            "scroll",
+            "minimize",
+            "maximize",
+            "resize",
+            "focus",
+            "activate",
             # Registry operations
-            "registry", "reg", "edit", "modify", "update", "configure", "settings",
+            "registry",
+            "reg",
+            "edit",
+            "modify",
+            "update",
+            "configure",
+            "settings",
             # Network operations
-            "download", "upload", "connect", "disconnect", "ping", "network",
+            "download",
+            "upload",
+            "connect",
+            "disconnect",
+            "ping",
+            "network",
             # General action verbs
-            "enable", "disable", "toggle", "switch", "change", "set", "adjust",
+            "enable",
+            "disable",
+            "toggle",
+            "switch",
+            "change",
+            "set",
+            "adjust",
         }
-        
+
         logger.info("Controller initialized")
 
     def process_command(self, user_input: str) -> ControllerResult:
@@ -120,29 +172,29 @@ class Controller:
             ControllerResult with plan and execution outcomes
         """
         logger.info(f"Controller.process_command() for: {user_input}")
-        
+
         try:
             # Step 1: Generate plan from user input
             plan = self.planner.plan(user_input)
             logger.info(f"Plan generated: {plan.plan_id} with {len(plan.steps)} steps")
-            
+
             # Step 2: Execute plan through dispatcher
             step_outcomes = self.dispatcher.dispatch(plan)
             logger.info(f"Dispatch completed with {len(step_outcomes)} outcomes")
-            
+
             # Step 3: Build result
             summary = self.dispatcher.get_summary()
-            
+
             result = ControllerResult(
                 success=all(o.success for o in step_outcomes) if step_outcomes else False,
                 plan=plan,
                 step_outcomes=step_outcomes,
                 summary=summary,
             )
-            
+
             logger.info(f"Command processing completed: {result.success}")
             return result
-            
+
         except Exception as e:
             logger.exception(f"Error processing command: {e}")
             return ControllerResult(
@@ -170,43 +222,51 @@ class Controller:
             ControllerResult with plan and execution outcomes
         """
         logger.info(f"Controller.process_command_stream() for: {user_input}")
-        
+
         try:
             # Step 1: Stream plan generation from planner
             logger.debug("Streaming plan generation")
             plan = None
-            
+
             try:
-                for plan_chunk in self.planner.plan_stream(user_input):
-                    yield plan_chunk
-                
-                # Get the final plan
-                plan = self.planner.plan(user_input)
-                
+                plan_gen = self.planner.plan_stream(user_input)
+
+                # Consume the generator and yield all chunks, capturing the final Plan
+                try:
+                    while True:
+                        plan_chunk = next(plan_gen)
+                        yield plan_chunk
+                except StopIteration as e:
+                    # Capture the final Plan from StopIteration.value
+                    plan = e.value
+                    logger.debug(
+                        f"Plan generator completed with plan: {plan.plan_id if plan else 'None'}"
+                    )
+
             except Exception as e:
                 logger.exception(f"Error during plan streaming: {e}")
                 yield f"\n❌ Planning error: {str(e)}\n"
                 return ControllerResult(success=False, error=str(e))
-            
+
             if not plan:
                 error_msg = "No plan generated"
                 logger.error(error_msg)
                 yield f"\n❌ {error_msg}\n"
                 return ControllerResult(success=False, error=error_msg)
-            
+
             # Step 2: Emit transition marker
             yield "\n[Executing...]\n\n"
-            
+
             # Step 3: Stream plan execution from dispatcher
             logger.debug("Streaming plan execution")
             step_outcomes = []
-            
+
             try:
                 for exec_chunk in self.dispatcher.dispatch_stream(plan):
                     yield exec_chunk
-                
+
                 step_outcomes = self.dispatcher.get_outcomes()
-                
+
             except Exception as e:
                 logger.exception(f"Error during execution streaming: {e}")
                 yield f"\n❌ Execution error: {str(e)}\n"
@@ -215,20 +275,20 @@ class Controller:
                     plan=plan,
                     error=str(e),
                 )
-            
+
             # Step 4: Build result with summary
             summary = self.dispatcher.get_summary()
-            
+
             result = ControllerResult(
                 success=all(o.success for o in step_outcomes) if step_outcomes else False,
                 plan=plan,
                 step_outcomes=step_outcomes,
                 summary=summary,
             )
-            
+
             logger.info(f"Stream processing completed: {result.success}")
             return result
-            
+
         except Exception as e:
             logger.exception(f"Error in process_command_stream: {e}")
             yield f"\n❌ Fatal error: {str(e)}\n"

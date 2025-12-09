@@ -9,7 +9,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -171,6 +171,87 @@ class ReasoningModule:
         except Exception as e:
             logger.error(f"Failed to generate plan: {e}")
             raise
+
+    def plan_actions_stream(self, user_input: str) -> Generator[str, None, Plan]:
+        """
+        Generate a structured plan with streaming progress events.
+
+        Yields progress events as the plan is constructed, then returns
+        the final Plan object via StopIteration.value.
+
+        Yields:
+            - Start event
+            - Step construction events as steps are built
+            - Validation summary
+            - Final status
+
+        Returns:
+            Final Plan object (via generator completion)
+
+        Raises:
+            ValueError: If plan generation fails
+        """
+        logger.info(f"Generating plan with streaming for: {user_input}")
+
+        if not user_input or not user_input.strip():
+            raise ValueError("User input cannot be empty")
+
+        try:
+            # Emit start event
+            yield "🧠 Planning...\n"
+
+            # Generate initial plan with streaming of step construction
+            plan = self._generate_initial_plan_stream(user_input)
+
+            # Emit plan summary
+            yield f"📋 Plan {plan.plan_id}: {plan.description}\n"
+
+            # Emit step summaries as they're available
+            if plan.steps:
+                yield f"📌 Identified {len(plan.steps)} steps:\n"
+                for step in plan.steps:
+                    yield f"  {step.step_number}. {step.description}\n"
+
+            # Verify the plan
+            plan = self._verify_plan(plan)
+
+            # Emit validation summary
+            if plan.validation_result:
+                if plan.validation_result.is_valid:
+                    yield "✓ Plan validated successfully\n"
+                else:
+                    if plan.validation_result.issues:
+                        yield f"⚠️  {len(plan.validation_result.issues)} validation issues found\n"
+                    if plan.validation_result.warnings:
+                        yield f"⚠️  {len(plan.validation_result.warnings)} warnings\n"
+                    if plan.validation_result.safety_concerns:
+                        yield f"🛡️  {len(plan.validation_result.safety_concerns)} safety concerns\n"
+
+            # Emit final safety status
+            yield f"🔒 Safe: {'✓' if plan.is_safe else '✗'}\n"
+
+            logger.info(f"Plan generation and verification completed: {plan.plan_id}")
+            return plan
+
+        except Exception as e:
+            logger.error(f"Failed to generate plan: {e}")
+            yield f"❌ Error during planning: {str(e)}\n"
+            raise
+
+    def _generate_initial_plan_stream(self, user_input: str) -> Plan:
+        """
+        Generate initial plan from user input.
+
+        This is the synchronous generation. The streaming wrapper
+        in plan_actions_stream handles yielding progress events.
+
+        Args:
+            user_input: Natural language user request
+
+        Returns:
+            Plan: Generated but not yet verified plan
+        """
+        return self._generate_initial_plan(user_input)
 
     def _generate_initial_plan(self, user_input: str) -> Plan:
         """
@@ -413,10 +494,16 @@ Return only valid JSON, no other text.
         """
         steps_data = response.get("steps", [])
 
-        logger.debug(f"Attempting to parse steps. steps_data type: {type(steps_data)}, length: {len(steps_data) if isinstance(steps_data, (list, dict)) else 'N/A'}")
+        length_str = len(steps_data) if isinstance(steps_data, (list, dict)) else "N/A"
+        logger.debug(
+            f"Attempting to parse steps. steps_data type: {type(steps_data)}, "
+            f"length: {length_str}"
+        )
 
         if not steps_data:
-            logger.warning(f"LLM did not provide steps (steps_data={steps_data}), generating fallback plan")
+            logger.warning(
+                f"LLM did not provide steps (steps_data={steps_data}), generating fallback plan"
+            )
             logger.debug(f"Full response was: {response}")
             return self._generate_fallback_plan(user_input)
 
@@ -458,7 +545,9 @@ Return only valid JSON, no other text.
                 continue
 
         if not steps:
-            logger.warning(f"Failed to parse any steps from {len(steps_data)} step entries, using fallback")
+            logger.warning(
+                f"Failed to parse any steps from {len(steps_data)} step entries, using fallback"
+            )
             steps = self._generate_fallback_plan(user_input)
 
         return steps

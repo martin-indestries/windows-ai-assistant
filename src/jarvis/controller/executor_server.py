@@ -103,8 +103,6 @@ class ExecutorServer:
 
         context = context or {}
 
-        yield f"⚙️  Executing step {step.step_number}: {step.description}\n"
-
         try:
             # Execute the step
             action_result = self._synthesize_and_execute(step, context)

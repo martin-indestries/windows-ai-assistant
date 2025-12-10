@@ -63,8 +63,12 @@ class PlanStep(BaseModel):
     estimated_duration: Optional[str] = Field(
         default=None, description="Estimated time to complete step"
     )
-    validation_notes: Optional[str] = Field(default=None, description="Notes from validation")
-    status: StepStatus = Field(default=StepStatus.PENDING, description="Current step status")
+    validation_notes: Optional[str] = Field(
+        default=None, description="Notes from validation"
+    )
+    status: StepStatus = Field(
+        default=StepStatus.PENDING, description="Current step status"
+    )
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -73,7 +77,9 @@ class PlanValidationResult(BaseModel):
     """Result of plan validation."""
 
     is_valid: bool = Field(description="Whether plan is valid")
-    issues: List[str] = Field(default_factory=list, description="Validation issues found")
+    issues: List[str] = Field(
+        default_factory=list, description="Validation issues found"
+    )
     warnings: List[str] = Field(default_factory=list, description="Validation warnings")
     safety_concerns: List[str] = Field(
         default_factory=list, description="Safety concerns identified"
@@ -88,7 +94,9 @@ class Plan(BaseModel):
     plan_id: str = Field(description="Unique plan identifier")
     user_input: str = Field(description="Original user input")
     description: str = Field(description="High-level plan description")
-    steps: List[PlanStep] = Field(default_factory=list, description="Ordered list of steps")
+    steps: List[PlanStep] = Field(
+        default_factory=list, description="Ordered list of steps"
+    )
     validation_result: Optional[PlanValidationResult] = Field(
         default=None, description="Result of plan validation"
     )
@@ -103,7 +111,9 @@ class Plan(BaseModel):
     def is_valid_and_safe(self) -> bool:
         """Check if plan has been validated and is safe to execute."""
         return (
-            self.validation_result is not None and self.validation_result.is_valid and self.is_safe
+            self.validation_result is not None
+            and self.validation_result.is_valid
+            and self.is_safe
         )
 
     def has_unresolved_dependencies(self) -> bool:
@@ -134,6 +144,7 @@ class ReasoningModule:
         config: JarvisConfig,
         llm_client: LLMClient,
         rag_service: Optional[Any] = None,
+        system_action_router: Optional[Any] = None,
     ) -> None:
         """
         Initialize reasoning module.
@@ -142,10 +153,12 @@ class ReasoningModule:
             config: Application configuration
             llm_client: LLM client for plan generation
             rag_service: Optional RAG memory service for contextual knowledge
+            system_action_router: Optional system action router for tool catalog
         """
         self.config = config
         self.llm_client = llm_client
         self.rag_service = rag_service
+        self.system_action_router = system_action_router
         self._plan_counter = 0
         logger.info("ReasoningModule initialized")
 
@@ -190,7 +203,9 @@ class ReasoningModule:
             Plan: Generated but not yet verified plan
         """
         self._plan_counter += 1
-        plan_id = f"plan_{self._plan_counter}_{int(datetime.now(timezone.utc).timestamp())}"
+        plan_id = (
+            f"plan_{self._plan_counter}_{int(datetime.now(timezone.utc).timestamp())}"
+        )
 
         prompt = self._build_planning_prompt(user_input)
         logger.debug(f"Planning prompt length: {len(prompt)} characters")
@@ -255,7 +270,9 @@ class ReasoningModule:
         )
 
         plan.validation_result = validation_result
-        plan.is_safe = len(safety_concerns) == 0 and self.config.safety.enable_input_validation
+        plan.is_safe = (
+            len(safety_concerns) == 0 and self.config.safety.enable_input_validation
+        )
         plan.verified_at = datetime.now(timezone.utc).isoformat()
 
         if validation_result.is_valid and plan.is_safe:
@@ -270,7 +287,7 @@ class ReasoningModule:
 
     def _build_planning_prompt(self, user_input: str) -> str:
         """
-        Build a prompt for plan generation with RAG enrichment.
+        Build a prompt for plan generation with RAG enrichment and tool catalog.
 
         Args:
             user_input: User's natural language request
@@ -278,22 +295,42 @@ class ReasoningModule:
         Returns:
             Formatted prompt for LLM, enriched with relevant knowledge if RAG available
         """
+        # Build tool catalog section if router is available
+        tool_catalog_section = ""
+        if self.system_action_router:
+            try:
+                available_actions = self.system_action_router.list_available_actions()
+                tool_catalog_section = self._format_tool_catalog_for_prompt(
+                    available_actions
+                )
+                logger.debug("Tool catalog added to planning prompt")
+            except Exception as e:
+                logger.warning(f"Failed to get tool catalog: {e}")
+
         base_prompt = f"""
 Generate a detailed execution plan for the following request.
 Break it down into clear, sequential steps.
 
 Request: {user_input}
 
+{tool_catalog_section}
+
 Respond with valid JSON containing:
 - description: High-level summary of the plan
 - steps: Array of steps, each with:
   - step_number: Sequential number starting from 1
-  - description: What to do in this step
-  - required_tools: Array of tool names needed
+  - description: What to do in this step (be specific and actionable)
+  - required_tools: Array of tool names needed (from the catalog above)
   - dependencies: Array of step numbers this step depends on
   - safety_flags: Array of safety concerns (use: destructive, network_access,
     file_modification, system_command, external_dependency)
   - estimated_duration: Estimated time (e.g., "5 minutes")
+
+Examples of good steps:
+- "Use file_create to create a new file at /path/to/file.txt"
+- "Use subprocess_open_application to launch notepad.exe"
+- "Use powershell_get_system_info to retrieve system information"
+- "Use gui_click_mouse to click at coordinates (100, 200)"
 
 Ensure:
 1. Steps are in logical order
@@ -301,6 +338,8 @@ Ensure:
 3. No circular dependencies
 4. Each step is focused on a single task
 5. Safety flags are appropriately set
+6. Every step has at least one required tool from the catalog
+7. Descriptions are specific and reference concrete actions
 
 Return only valid JSON, no other text.
 """
@@ -321,6 +360,45 @@ Return only valid JSON, no other text.
                 return base_prompt
 
         return base_prompt
+
+    def _format_tool_catalog_for_prompt(
+        self, available_actions: Dict[str, Dict[str, str]]
+    ) -> str:
+        """
+        Format the tool catalog for inclusion in the planning prompt.
+
+        Args:
+            available_actions: Dictionary of available actions by category
+
+        Returns:
+            Formatted string describing available tools
+        """
+        catalog_text = """
+AVAILABLE TOOLS:
+================
+
+You must use ONLY the following tools. Each step must specify at least one tool from this list:
+
+"""
+
+        for category, actions in available_actions.items():
+            catalog_text += f"\n{category.upper()} TOOLS:\n"
+            for tool_name, description in actions.items():
+                catalog_text += f"  - {tool_name}: {description}\n"
+
+        catalog_text += """
+TOOL USAGE EXAMPLES:
+====================
+- For file operations: "Use file_create to create a new file", "Use file_list to list directory contents"
+- For applications: "Use subprocess_open_application to launch notepad.exe"
+- For system info: "Use powershell_get_system_info to get system information"
+- For GUI: "Use gui_click_mouse to click at coordinates", "Use typing_type_text to type text"
+- For commands: "Use powershell_execute to run PowerShell command", "Use subprocess_execute to run system command"
+
+IMPORTANT: Every step MUST include at least one required_tools entry from the list above.
+"""
+
+        return catalog_text
 
     def _parse_planning_response(self, response_text: str) -> Dict[str, Any]:
         """
@@ -390,7 +468,9 @@ Return only valid JSON, no other text.
     def _repair_json(self, text: str) -> str:
         """Attempt to repair malformed JSON."""
         # 1. Normalize quotes (replace smart quotes)
-        text = text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+        text = (
+            text.replace("“", '"').replace("”", '"').replace("‘", "'").replace("’", "'")
+        )
 
         # 2. Handle single quotes for keys
         # Replace 'key': with "key":
@@ -433,7 +513,9 @@ Return only valid JSON, no other text.
 
         raise PlanningResponseError(f"Unexpected JSON structure: {type(parsed)}")
 
-    def _parse_plan_steps(self, response: Dict[str, Any], user_input: str) -> List[PlanStep]:
+    def _parse_plan_steps(
+        self, response: Dict[str, Any], user_input: str
+    ) -> List[PlanStep]:
         """
         Parse LLM response into PlanStep objects.
 
@@ -459,7 +541,9 @@ Return only valid JSON, no other text.
             return self._generate_fallback_plan(user_input)
 
         if not isinstance(steps_data, list):
-            logger.warning(f"steps_data is not a list, it's {type(steps_data)}: {steps_data}")
+            logger.warning(
+                f"steps_data is not a list, it's {type(steps_data)}: {steps_data}"
+            )
             logger.warning("LLM did not provide steps array, generating fallback plan")
             return self._generate_fallback_plan(user_input)
 
@@ -489,7 +573,9 @@ Return only valid JSON, no other text.
                     estimated_duration=step_data.get("estimated_duration"),
                 )
                 steps.append(step)
-                logger.debug(f"Successfully parsed step {step.step_number}: {step.description}")
+                logger.debug(
+                    f"Successfully parsed step {step.step_number}: {step.description}"
+                )
             except Exception as e:
                 logger.warning(f"Failed to parse step {i}: {e}")
                 logger.debug(f"Step data was: {step_data}")
@@ -501,41 +587,482 @@ Return only valid JSON, no other text.
             )
             steps = self._generate_fallback_plan(user_input)
 
+        # Validate and inject tools for all steps
+        steps = self._validate_and_inject_tools(steps, user_input)
+
         return steps
+
+    def _validate_and_inject_tools(
+        self, steps: List[PlanStep], user_input: str
+    ) -> List[PlanStep]:
+        """
+        Validate required_tools and inject missing tools using heuristics.
+
+        Args:
+            steps: List of parsed PlanStep objects
+            user_input: Original user input for context
+
+        Returns:
+            List of PlanStep objects with validated and injected tools
+        """
+        logger.info("Validating and injecting tools for plan steps")
+
+        # Get available tools if router is available
+        available_tools = set()
+        if self.system_action_router:
+            try:
+                actions_dict = self.system_action_router.list_available_actions()
+                for category_actions in actions_dict.values():
+                    available_tools.update(category_actions.keys())
+                logger.debug(f"Available tools: {sorted(available_tools)}")
+            except Exception as e:
+                logger.warning(f"Failed to get available tools: {e}")
+
+        for step in steps:
+            # Validate existing tools
+            if step.required_tools:
+                validated_tools = []
+                for tool in step.required_tools:
+                    if tool in available_tools:
+                        validated_tools.append(tool)
+                    else:
+                        logger.warning(
+                            f"Tool '{tool}' not found in available tools, removing"
+                        )
+
+                step.required_tools = validated_tools
+
+            # Inject tools if empty or all were invalid
+            if not step.required_tools:
+                injected_tools = self._inject_tools_by_heuristics(
+                    step.description, user_input, available_tools
+                )
+                step.required_tools = injected_tools
+
+                # Rewrite description to be more concrete if tools were injected
+                if injected_tools:
+                    step.description = self._make_description_concrete(
+                        step.description, injected_tools
+                    )
+                    logger.info(
+                        f"Injected tools {injected_tools} and rewrote description: "
+                        f"{step.description}"
+                    )
+
+        return steps
+
+    def _inject_tools_by_heuristics(
+        self, description: str, user_input: str, available_tools: set
+    ) -> List[str]:
+        """
+        Inject tools based on keyword heuristics from description and user input.
+
+        Args:
+            description: Step description
+            user_input: Original user input
+            available_tools: Set of available tool names
+
+        Returns:
+            List of injected tool names
+        """
+        desc_lower = description.lower()
+        input_lower = user_input.lower()
+        combined_text = f"{desc_lower} {input_lower}"
+
+        injected_tools = []
+
+        # File operation heuristics
+        file_keywords = [
+            "file",
+            "create",
+            "delete",
+            "list",
+            "move",
+            "copy",
+            "directory",
+            "folder",
+            "write",
+            "read",
+        ]
+        if any(keyword in combined_text for keyword in file_keywords):
+            if (
+                "create" in combined_text
+                or "write" in combined_text
+                or "new" in combined_text
+            ):
+                if "file_create" in available_tools:
+                    injected_tools.append("file_create")
+            elif "list" in combined_text or "show" in combined_text:
+                if "file_list" in available_tools:
+                    injected_tools.append("file_list")
+            elif "delete" in combined_text or "remove" in combined_text:
+                if "file_delete" in available_tools:
+                    injected_tools.append("file_delete")
+            elif "move" in combined_text or "rename" in combined_text:
+                if "file_move" in available_tools:
+                    injected_tools.append("file_move")
+            elif "copy" in combined_text:
+                if "file_copy" in available_tools:
+                    injected_tools.append("file_copy")
+
+        # Application/Process heuristics
+        app_keywords = [
+            "open",
+            "launch",
+            "start",
+            "run",
+            "application",
+            "program",
+            "exe",
+            "notepad",
+            "calculator",
+        ]
+        if any(keyword in combined_text for keyword in app_keywords):
+            if "subprocess_open_application" in available_tools:
+                injected_tools.append("subprocess_open_application")
+
+        # System information heuristics
+        info_keywords = [
+            "system",
+            "info",
+            "information",
+            "status",
+            "processes",
+            "services",
+            "weather",
+            "time",
+        ]
+        if any(keyword in combined_text for keyword in info_keywords):
+            if "weather" in combined_text:
+                # This would be handled by a specialized weather tool
+                pass
+            elif "processes" in combined_text:
+                if "powershell_get_processes" in available_tools:
+                    injected_tools.append("powershell_get_processes")
+            elif "services" in combined_text:
+                if "powershell_get_services" in available_tools:
+                    injected_tools.append("powershell_get_services")
+            else:
+                if "powershell_get_system_info" in available_tools:
+                    injected_tools.append("powershell_get_system_info")
+
+        # Command execution heuristics
+        cmd_keywords = [
+            "command",
+            "execute",
+            "run",
+            "script",
+            "powershell",
+            "cmd",
+            "shell",
+        ]
+        if any(keyword in combined_text for keyword in cmd_keywords):
+            if "powershell" in combined_text:
+                if "powershell_execute" in available_tools:
+                    injected_tools.append("powershell_execute")
+            else:
+                if "subprocess_execute" in available_tools:
+                    injected_tools.append("subprocess_execute")
+
+        # GUI heuristics
+        gui_keywords = [
+            "click",
+            "mouse",
+            "type",
+            "keyboard",
+            "screenshot",
+            "capture",
+            "gui",
+            "screen",
+        ]
+        if any(keyword in combined_text for keyword in gui_keywords):
+            if "click" in combined_text:
+                if "gui_click_mouse" in available_tools:
+                    injected_tools.append("gui_click_mouse")
+            elif "type" in combined_text or "keyboard" in combined_text:
+                if "typing_type_text" in available_tools:
+                    injected_tools.append("typing_type_text")
+            elif "screenshot" in combined_text or "capture" in combined_text:
+                if "gui_capture_screen" in available_tools:
+                    injected_tools.append("gui_capture_screen")
+
+        # Fallback to a generic tool if nothing matched
+        if not injected_tools and available_tools:
+            # Prefer file operations as a safe default
+            if "file_list" in available_tools:
+                injected_tools.append("file_list")
+            elif "powershell_get_system_info" in available_tools:
+                injected_tools.append("powershell_get_system_info")
+            else:
+                # Just pick the first available tool
+                injected_tools.append(list(available_tools)[0])
+
+        return injected_tools
+
+    def _make_description_concrete(self, description: str, tools: List[str]) -> str:
+        """
+        Rewrite a vague description to be more concrete and actionable.
+
+        Args:
+            description: Original vague description
+            tools: List of tools that will be used
+
+        Returns:
+            More concrete and actionable description
+        """
+        # Map tools to action patterns
+        tool_patterns = {
+            "file_create": "Use file_create to create a file",
+            "file_list": "Use file_list to list directory contents",
+            "file_delete": "Use file_delete to delete file",
+            "file_move": "Use file_move to move/rename file",
+            "file_copy": "Use file_copy to copy file",
+            "subprocess_open_application": "Use subprocess_open_application to launch application",
+            "powershell_execute": "Use powershell_execute to run command",
+            "subprocess_execute": "Use subprocess_execute to execute command",
+            "powershell_get_system_info": "Use powershell_get_system_info to get system information",
+            "powershell_get_processes": "Use powershell_get_processes to get running processes",
+            "powershell_get_services": "Use powershell_get_services to get services",
+            "gui_click_mouse": "Use gui_click_mouse to click at coordinates",
+            "typing_type_text": "Use typing_type_text to type text",
+            "gui_capture_screen": "Use gui_capture_screen to capture screenshot",
+        }
+
+        # If description already mentions a tool, keep it
+        if any(tool in description for tool in tools):
+            return description
+
+        # Otherwise, rewrite based on the primary tool
+        primary_tool = tools[0] if tools else None
+        if primary_tool and primary_tool in tool_patterns:
+            return f"{tool_patterns[primary_tool]} - {description}"
+
+        return description
 
     def _generate_fallback_plan(self, user_input: str) -> List[PlanStep]:
         """
         Generate a fallback plan when LLM parsing fails.
 
+        Uses intent keyword inference to create concrete, actionable steps
+        with appropriate tool assignments.
+
         Args:
             user_input: Original user input
 
         Returns:
-            List of basic PlanStep objects
+            List of PlanStep objects with concrete tool assignments
         """
-        return [
-            PlanStep(
-                step_number=1,
-                description=f"Initialize: {user_input}",
-                required_tools=[],
-                dependencies=[],
-                safety_flags=[],
-            ),
-            PlanStep(
-                step_number=2,
-                description="Execute requested action",
-                required_tools=[],
-                dependencies=[1],
-                safety_flags=[],
-            ),
-            PlanStep(
-                step_number=3,
-                description="Verify completion",
-                required_tools=[],
-                dependencies=[2],
-                safety_flags=[],
-            ),
-        ]
+        logger.info(f"Generating fallback plan for: {user_input}")
+
+        # Get available tools for inference
+        available_tools = set()
+        if self.system_action_router:
+            try:
+                actions_dict = self.system_action_router.list_available_actions()
+                for category_actions in actions_dict.values():
+                    available_tools.update(category_actions.keys())
+            except Exception as e:
+                logger.warning(f"Failed to get available tools for fallback: {e}")
+
+        # Infer intent from user input
+        input_lower = user_input.lower()
+
+        # Determine primary intent and create appropriate steps
+        steps = []
+
+        # Check for file listing first (more specific)
+        if any(
+            keyword in input_lower for keyword in ["list", "show", "display", "see"]
+        ) and any(
+            keyword in input_lower for keyword in ["file", "directory", "folder"]
+        ):
+            # File listing intent
+            steps = [
+                PlanStep(
+                    step_number=1,
+                    description="Use file_list to list directory contents",
+                    required_tools=(
+                        ["file_list"] if "file_list" in available_tools else []
+                    ),
+                    dependencies=[],
+                    safety_flags=[],
+                )
+            ]
+        # Check for file creation next
+        elif any(
+            keyword in input_lower for keyword in ["create", "new", "write", "make"]
+        ) and any(keyword in input_lower for keyword in ["file"]):
+            # File creation intent
+            steps = [
+                PlanStep(
+                    step_number=1,
+                    description="Use file_create to create a new file",
+                    required_tools=(
+                        ["file_create"] if "file_create" in available_tools else []
+                    ),
+                    dependencies=[],
+                    safety_flags=(
+                        [SafetyFlag.FILE_MODIFICATION]
+                        if "file_create" in available_tools
+                        else []
+                    ),
+                )
+            ]
+        elif any(
+            keyword in input_lower
+            for keyword in [
+                "open",
+                "launch",
+                "start",
+                "run",
+                "application",
+                "program",
+                "app",
+                "notepad",
+                "calculator",
+            ]
+        ):
+            # Application launch intent
+            steps = [
+                PlanStep(
+                    step_number=1,
+                    description="Use subprocess_open_application to launch the requested application",
+                    required_tools=(
+                        ["subprocess_open_application"]
+                        if "subprocess_open_application" in available_tools
+                        else []
+                    ),
+                    dependencies=[],
+                    safety_flags=(
+                        [SafetyFlag.SYSTEM_COMMAND]
+                        if "subprocess_open_application" in available_tools
+                        else []
+                    ),
+                )
+            ]
+        elif any(
+            keyword in input_lower
+            for keyword in [
+                "system",
+                "info",
+                "information",
+                "status",
+                "processes",
+                "services",
+                "weather",
+                "time",
+            ]
+        ):
+            # System information intent
+            steps = [
+                PlanStep(
+                    step_number=1,
+                    description="Use powershell_get_system_info to retrieve system information",
+                    required_tools=(
+                        ["powershell_get_system_info"]
+                        if "powershell_get_system_info" in available_tools
+                        else []
+                    ),
+                    dependencies=[],
+                    safety_flags=[],
+                )
+            ]
+        elif any(
+            keyword in input_lower
+            for keyword in ["command", "execute", "run", "script"]
+        ):
+            # Command execution intent
+            tool = (
+                "powershell_execute"
+                if "powershell_execute" in available_tools
+                else "subprocess_execute"
+            )
+            steps = [
+                PlanStep(
+                    step_number=1,
+                    description=f"Use {tool} to execute the requested command",
+                    required_tools=[tool] if tool in available_tools else [],
+                    dependencies=[],
+                    safety_flags=(
+                        [SafetyFlag.SYSTEM_COMMAND] if tool in available_tools else []
+                    ),
+                )
+            ]
+        elif any(
+            keyword in input_lower for keyword in ["click", "mouse", "gui", "screen"]
+        ):
+            # GUI operation intent
+            steps = [
+                PlanStep(
+                    step_number=1,
+                    description="Use gui_click_mouse to perform the requested GUI action",
+                    required_tools=(
+                        ["gui_click_mouse"]
+                        if "gui_click_mouse" in available_tools
+                        else []
+                    ),
+                    dependencies=[],
+                    safety_flags=[],
+                )
+            ]
+        else:
+            # Generic fallback - try to determine best tool
+            if available_tools:
+                # Prefer safe, informational tools
+                preferred_tools = [
+                    "file_list",
+                    "powershell_get_system_info",
+                    "powershell_get_processes",
+                ]
+                selected_tool = None
+                for tool in preferred_tools:
+                    if tool in available_tools:
+                        selected_tool = tool
+                        break
+
+                if not selected_tool:
+                    selected_tool = list(available_tools)[
+                        0
+                    ]  # Fallback to first available
+
+                steps = [
+                    PlanStep(
+                        step_number=1,
+                        description=f"Use {selected_tool} to handle the request: {user_input}",
+                        required_tools=[selected_tool],
+                        dependencies=[],
+                        safety_flags=(
+                            [SafetyFlag.SYSTEM_COMMAND]
+                            if "powershell" in selected_tool
+                            or "subprocess" in selected_tool
+                            else []
+                        ),
+                    )
+                ]
+            else:
+                # No tools available - create a generic step
+                steps = [
+                    PlanStep(
+                        step_number=1,
+                        description=f"Process request: {user_input}",
+                        required_tools=[],
+                        dependencies=[],
+                        safety_flags=[],
+                    )
+                ]
+
+        # Ensure no step has empty required_tools if tools are available
+        if available_tools:
+            for step in steps:
+                if not step.required_tools:
+                    step.required_tools = ["file_list"]  # Safe default
+                    if not step.description.startswith("Use file_list"):
+                        step.description = (
+                            f"Use file_list to handle: {step.description}"
+                        )
+
+        logger.info(f"Generated fallback plan with {len(steps)} steps")
+        return steps
 
     def _check_dependencies(self, plan: Plan) -> List[str]:
         """
@@ -553,9 +1080,13 @@ Return only valid JSON, no other text.
         for step in plan.steps:
             for dep in step.dependencies:
                 if dep not in step_numbers:
-                    errors.append(f"Step {step.step_number} depends on non-existent step {dep}")
+                    errors.append(
+                        f"Step {step.step_number} depends on non-existent step {dep}"
+                    )
                 if dep >= step.step_number:
-                    errors.append(f"Step {step.step_number} has forward dependency on step {dep}")
+                    errors.append(
+                        f"Step {step.step_number} has forward dependency on step {dep}"
+                    )
 
         return errors
 
@@ -603,7 +1134,9 @@ Return only valid JSON, no other text.
 
         first_step = plan.steps[0]
         if first_step.dependencies:
-            warnings.append(f"First step (step 1) has dependencies: {first_step.dependencies}")
+            warnings.append(
+                f"First step (step 1) has dependencies: {first_step.dependencies}"
+            )
 
         for step in plan.steps:
             if not step.description or not step.description.strip():
@@ -625,7 +1158,9 @@ Return only valid JSON, no other text.
 
         for step in plan.steps:
             if SafetyFlag.DESTRUCTIVE in step.safety_flags:
-                concerns.append(f"Step {step.step_number} performs destructive operations")
+                concerns.append(
+                    f"Step {step.step_number} performs destructive operations"
+                )
             if SafetyFlag.SYSTEM_COMMAND in step.safety_flags:
                 concerns.append(f"Step {step.step_number} executes system commands")
             if SafetyFlag.FILE_MODIFICATION in step.safety_flags:

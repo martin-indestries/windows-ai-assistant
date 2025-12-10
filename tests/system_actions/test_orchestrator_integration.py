@@ -298,6 +298,8 @@ class TestOrchestratorIntegration:
 
         result = orchestrator._execute_step(step)
 
+        # With new tool injection logic, steps should not have empty required_tools
+        # But if they do, the step should still execute
         assert result["success"] is True
         assert "No tools required" in result["message"]
 
@@ -338,3 +340,49 @@ class TestOrchestratorIntegration:
         assert result["success"] is False
         assert "Error executing step" in result["message"]
         assert "Test error" in result["error"]
+
+    def test_execute_plan_with_tool_injection(self):
+        """Test plan execution with tool injection from reasoning module."""
+        from unittest.mock import Mock
+
+        from jarvis.reasoning import ReasoningModule
+
+        config = Mock(spec=JarvisConfig)
+        memory_store = Mock()
+
+        # Mock system action router
+        router = Mock(spec=SystemActionRouter)
+        router.route_action.return_value = ActionResult(
+            success=True,
+            action_type="file_create",
+            message="File created successfully",
+            data={"file_path": "test.txt"},
+            execution_time_ms=10.0,
+        )
+        router.list_available_actions.return_value = {
+            "file": {"file_create": "Create a file", "file_list": "List files"},
+            "system": {"powershell_execute": "Execute PowerShell command"},
+        }
+
+        # Mock LLM client for reasoning module
+        llm_client = Mock()
+        llm_client.generate.return_value = '{"description": "Test plan", "steps": []}'
+
+        # Create reasoning module with tool catalog
+        reasoning_module = ReasoningModule(config, llm_client, system_action_router=router)
+
+        orchestrator = Orchestrator(
+            config=config, memory_store=memory_store, system_action_router=router
+        )
+
+        # Generate plan using reasoning module (should inject tools)
+        plan = reasoning_module.plan_actions("create a file")
+
+        result = orchestrator.execute_plan(plan)
+
+        assert result["status"] == "success"
+        assert len(result["results"]) >= 1
+        # Verify that steps have tools injected
+        for step in plan.steps:
+            assert len(step.required_tools) > 0
+            assert step.required_tools[0] in ["file_create", "file_list", "powershell_execute"]

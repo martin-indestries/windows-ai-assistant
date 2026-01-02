@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 class DualModelManager:
     """
     Manager for dual-model setup (Brain + Executor).
-    
+
     Bootstraps both servers, tests connectivity, and provides access
     to brain and executor services.
     """
@@ -42,7 +42,7 @@ class DualModelManager:
         self.config = config
         self._brain_server: Optional[BrainServer] = None
         self._executor_server: Optional[ExecutorServer] = None
-        
+
         if config.dual_llm.enabled:
             logger.info("Dual-model mode enabled, initializing brain and executor servers")
             self._initialize_servers()
@@ -192,10 +192,29 @@ class Container:
             config = self.get_config(config_path=config_path)
             memory_store = self.get_memory_store(config_path=config_path)
             system_action_router = self.get_system_action_router(config_path=config_path)
+
+            # Extract execution config for verification and retry settings
+            enable_verification = True
+            enable_retry = True
+            max_retries = 3
+
+            try:
+                config_dict = config.model_dump()
+                if "execution" in config_dict:
+                    exec_config = config_dict["execution"]
+                    enable_verification = exec_config.get("enable_verification", True)
+                    enable_retry = exec_config.get("enable_retry", True)
+                    max_retries = exec_config.get("max_retries", 3)
+            except Exception:
+                pass
+
             self._orchestrator = Orchestrator(
-                config=config, 
+                config=config,
                 memory_store=memory_store,
-                system_action_router=system_action_router
+                system_action_router=system_action_router,
+                enable_verification=enable_verification,
+                enable_retry=enable_retry,
+                max_retries=max_retries,
             )
         return self._orchestrator
 
@@ -243,9 +262,7 @@ class Container:
         if self._memory_module is None:
             config = self.get_config(config_path=config_path)
             storage_dir = config.storage.data_dir / "persistent_memory"
-            self._memory_module = MemoryModule(
-                storage_dir=storage_dir, backend_type="sqlite"
-            )
+            self._memory_module = MemoryModule(storage_dir=storage_dir, backend_type="sqlite")
         return self._memory_module
 
     def get_rag_service(self, config_path: Optional[str] = None) -> RAGMemoryService:
@@ -354,7 +371,7 @@ class Container:
         if self._system_action_router is None:
             action_executor = self.get_action_executor(config_path=config_path)
             config = self.get_config(config_path=config_path)
-            
+
             # Extract execution config if available
             dry_run = False
             action_timeout = 30
@@ -372,11 +389,12 @@ class Container:
                 pass
 
             from jarvis.system_actions import SystemActionRouter
+
             self._system_action_router = SystemActionRouter(
                 action_executor=action_executor,
                 dry_run=dry_run,
                 tesseract_path=tesseract_path,
-                action_timeout=action_timeout
+                action_timeout=action_timeout,
             )
         return self._system_action_router
 

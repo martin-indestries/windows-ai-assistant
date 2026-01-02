@@ -7,7 +7,10 @@ Central routing and coordination of commands through initialized modules.
 import logging
 from typing import Any, Dict, List, Optional
 
+from jarvis.action_executor import ActionResult
+from jarvis.action_fallback_strategies import ExecutionReport, StrategyExecutor
 from jarvis.config import JarvisConfig
+from jarvis.execution_verifier import ExecutionVerifier
 from jarvis.memory import MemoryStore, ToolCapability
 from jarvis.reasoning import Plan, PlanStep
 
@@ -26,6 +29,9 @@ class Orchestrator:
         config: JarvisConfig,
         memory_store: Optional[MemoryStore] = None,
         system_action_router: Optional[Any] = None,
+        enable_verification: bool = True,
+        enable_retry: bool = True,
+        max_retries: int = 3,
     ) -> None:
         """
         Initialize the orchestrator.
@@ -34,11 +40,25 @@ class Orchestrator:
             config: Application configuration
             memory_store: Optional memory store for tool knowledge
             system_action_router: Optional system action router for executing actions
+            enable_verification: Whether to enable post-execution verification
+            enable_retry: Whether to enable retry with fallback strategies
+            max_retries: Maximum number of retry attempts
         """
         self.config = config
         self.memory_store = memory_store
         self.system_action_router = system_action_router
+        self.enable_verification = enable_verification
+        self.enable_retry = enable_retry
+
+        # Initialize verification and retry components
+        self.execution_verifier = ExecutionVerifier(timeout=5) if enable_verification else None
+        self.strategy_executor = StrategyExecutor(max_retries=max_retries) if enable_retry else None
+
         logger.info("Orchestrator initialized")
+        logger.info(f"Verification enabled: {enable_verification}")
+        logger.info(f"Retry enabled: {enable_retry}")
+        if enable_retry:
+            logger.info(f"Max retries: {max_retries}")
 
     def handle_command(self, command: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
         """
@@ -180,7 +200,6 @@ class Orchestrator:
             if action_type:
                 logger.info(f"Parsed action_type: {action_type}")
                 logger.info(f"Parsed params: {params}")
-                logger.info("Routing action to system_action_router...")
 
                 if self.system_action_router is None:
                     return {
@@ -191,22 +210,79 @@ class Orchestrator:
                         "data": None,
                     }
 
-                result = self.system_action_router.route_action(action_type, **params)
+                # Execute with verification and retry if enabled
+                if self.enable_retry and self.strategy_executor:
+                    logger.info("========== EXECUTING WITH RETRY AND VERIFICATION ==========")
+                    result, attempts = self._execute_with_retry(
+                        action_type, params, dry_run=self.system_action_router.dry_run
+                    )
 
-                logger.info(
-                    f"Action result from router: success={result.success}, message={result.message}"
-                )
+                    # Build enhanced result with execution report
+                    result_dict = {
+                        "step_number": step.step_number,
+                        "description": step.description,
+                        "success": result.success,
+                        "message": result.message,
+                        "data": result.data,
+                        "error": result.error,
+                        "action_type": action_type,
+                        "params": params,
+                    }
 
-                return {
-                    "step_number": step.step_number,
-                    "description": step.description,
-                    "success": result.success,
-                    "message": result.message,
-                    "data": result.data,
-                    "error": result.error,
-                    "action_type": action_type,
-                    "params": params,
-                }
+                    # Add execution report
+                    report = ExecutionReport(action_type, params, result, attempts)
+                    result_dict["execution_report"] = report.get_summary()
+                    result_dict["verification_status"] = (
+                        "verified" if report.verified else "unverified"
+                    )
+
+                    # Log execution summary
+                    logger.info(f"========== EXECUTION COMPLETE ==========")
+                    logger.info(f"Success: {report.successful}")
+                    logger.info(f"Verified: {report.verified}")
+                    logger.info(f"Total attempts: {report.total_attempts}")
+                    logger.info(f"Strategies used: {', '.join(report.strategies_used)}")
+
+                    return result_dict
+
+                else:
+                    # Simple execution without retry
+                    logger.info("Routing action to system_action_router...")
+                    result = self.system_action_router.route_action(action_type, **params)
+
+                    logger.info(
+                        f"Action result from router: success={result.success}, message={result.message}"
+                    )
+
+                    # Simple verification if enabled
+                    verification_status = "not_verified"
+                    if self.enable_verification and self.execution_verifier:
+                        try:
+                            verification_result = self.execution_verifier.verify_action(
+                                action_type, result, **params
+                            )
+                            verification_status = (
+                                "verified"
+                                if verification_result.verified
+                                else "verification_failed"
+                            )
+                            logger.info(f"Verification status: {verification_status}")
+                        except Exception as e:
+                            logger.warning(f"Verification failed: {e}")
+                            verification_status = "verification_error"
+
+                    return {
+                        "step_number": step.step_number,
+                        "description": step.description,
+                        "success": result.success,
+                        "message": result.message,
+                        "data": result.data,
+                        "error": result.error,
+                        "action_type": action_type,
+                        "params": params,
+                        "verification_status": verification_status,
+                    }
+
             elif params.get("_informational"):
                 # action_type is None but marked as informational/planning step
                 logger.info(
@@ -218,6 +294,7 @@ class Orchestrator:
                     "success": True,
                     "message": "Informational/planning step completed",
                     "data": None,
+                    "verification_status": "not_applicable",
                 }
             else:
                 # action_type is None and couldn't be parsed
@@ -228,6 +305,7 @@ class Orchestrator:
                     "success": False,
                     "message": f"Could not parse action from description: {step.description}",
                     "data": None,
+                    "verification_status": "not_applicable",
                 }
 
         except Exception as e:
@@ -239,7 +317,45 @@ class Orchestrator:
                 "message": f"Error executing step: {str(e)}",
                 "data": None,
                 "error": str(e),
+                "verification_status": "error",
             }
+
+    def _execute_with_retry(
+        self,
+        action_type: str,
+        params: Dict[str, Any],
+        dry_run: bool = False,
+    ) -> tuple[ActionResult, List]:
+        """
+        Execute an action with retry logic and verification.
+
+        Args:
+            action_type: Type of action to execute
+            params: Parameters for the action
+            dry_run: Whether this is a dry run
+
+        Returns:
+            Tuple of (final ActionResult, list of RetryAttempt objects)
+        """
+
+        # Define the action function
+        def action_func(**kwargs: Any) -> ActionResult:
+            return self.system_action_router.route_action(action_type, **kwargs)
+
+        # Define the verification function
+        def verify_func(atype: str, result: ActionResult, **vparams: Any):
+            if self.execution_verifier:
+                return self.execution_verifier.verify_action(atype, result, **vparams)
+            return None
+
+        # Execute with retry
+        return self.strategy_executor.execute_with_retry(
+            action_func=action_func,
+            action_type=action_type,
+            original_params=params,
+            verify_func=verify_func if self.enable_verification else None,
+            dry_run=dry_run,
+        )
 
     def _parse_action_from_description(
         self, description: str, tool: str

@@ -103,127 +103,56 @@ class DirectExecutor:
 
     def stream_execution(self, script_path: Path, timeout: int = 30) -> Generator[str, None, None]:
         """
-        Execute script and stream output in real-time.
+        Execute script and stream output.
 
-        Windows-compatible implementation using threading for non-blocking reads.
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
 
         Args:
             script_path: Path to the script to execute
             timeout: Execution timeout in seconds
 
         Yields:
-            Output lines as they arrive
+            Output lines as they arrive (after completion)
         """
         logger.info(f"Streaming execution of {script_path}")
 
         try:
             # Windows-specific subprocess creation
-            import queue
-            import threading
-            import time
-
             creation_flags = 0
             if sys.platform == "win32":
                 creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
 
-            process = subprocess.Popen(
+            # Use subprocess.run() instead of Popen for better Windows compatibility
+            process = subprocess.run(
                 [sys.executable, str(script_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.DEVNULL,
+                capture_output=True,
                 text=True,
-                bufsize=1,
-                universal_newlines=True,
+                timeout=timeout,
                 creationflags=creation_flags,
             )
 
-            # Use threading for non-blocking reads
-            stdout_queue = queue.Queue()  # type: ignore[var-annotated]
-            stderr_queue = queue.Queue()  # type: ignore[var-annotated]
-            error_event = threading.Event()
+            # Yield stdout line by line
+            if process.stdout:
+                for line in process.stdout.splitlines(keepends=True):
+                    logger.debug(f"STDOUT: {line.rstrip()}")
+                    yield line
 
-            def read_output(pipe, queue_obj):
-                """Read from pipe and put lines into queue."""
-                try:
-                    for line in iter(pipe.readline, ""):
-                        if line:
-                            queue_obj.put(line)
-                        if error_event.is_set():
-                            break
-                except Exception as e:
-                    logger.error(f"Error reading from pipe: {e}")
-                finally:
-                    queue_obj.put(None)  # Signal end of stream
+            # Yield stderr line by line
+            if process.stderr:
+                for line in process.stderr.splitlines(keepends=True):
+                    logger.debug(f"STDERR: {line.rstrip()}")
+                    yield line
 
-            # Start reader threads
-            stdout_thread = threading.Thread(
-                target=read_output, args=(process.stdout, stdout_queue), daemon=True
-            )
-            stderr_thread = threading.Thread(
-                target=read_output, args=(process.stderr, stderr_queue), daemon=True
-            )
-
-            stdout_thread.start()
-            stderr_thread.start()
-
-            stdout_lines = []
-            stderr_lines = []
-            stdout_done = False
-            stderr_done = False
-
-            start_time = time.time()
-            while not (stdout_done and stderr_done):
-                # Check timeout
-                if time.time() - start_time > timeout:
-                    logger.warning(f"Script execution timeout after {timeout}s")
-                    error_event.set()
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                    yield f"\n❌ Error: Execution timed out after {timeout} seconds"
-                    return
-
-                # Try to get output from stdout queue (non-blocking)
-                try:
-                    if not stdout_done:
-                        item = stdout_queue.get_nowait()
-                        if item is None:
-                            stdout_done = True
-                        else:
-                            line = item
-                            stdout_lines.append(line)
-                            logger.debug(f"STDOUT: {line.rstrip()}")
-                            yield line
-                except queue.Empty:
-                    pass
-
-                # Try to get output from stderr queue (non-blocking)
-                try:
-                    if not stderr_done:
-                        item = stderr_queue.get_nowait()
-                        if item is None:
-                            stderr_done = True
-                        else:
-                            line = item
-                            stderr_lines.append(line)
-                            logger.debug(f"STDERR: {line.rstrip()}")
-                            yield line
-                except queue.Empty:
-                    pass
-
-                time.sleep(0.01)  # Small sleep to prevent busy waiting
-
-            # Wait for process to complete
-            process.wait()
+            # Check exit code
             exit_code = process.returncode
             logger.info(f"Process exited with code {exit_code}")
 
             if exit_code != 0:
-                stderr_output = "".join(stderr_lines)
-                logger.warning(f"Script failed with exit code {exit_code}: {stderr_output}")
+                logger.warning(f"Script failed with exit code {exit_code}")
 
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Script execution timeout after {timeout}s")
+            yield f"\n❌ Error: Execution timed out after {timeout} seconds"
         except Exception as e:
             logger.error(f"Failed to stream execution: {e}")
             yield f"\n❌ Error: {str(e)}"

@@ -6,12 +6,9 @@ step output against expected patterns.
 """
 
 import logging
-import queue
 import re
 import subprocess
 import sys
-import threading
-import time
 from typing import Generator, List, Optional, Tuple
 
 from jarvis.execution_models import CodeStep
@@ -62,9 +59,9 @@ class ExecutionMonitor:
         capture_stderr: bool = True,
     ) -> Generator[Tuple[str, str, bool], None, None]:
         """
-        Execute subprocess and yield (output_line, source, is_error) tuples in real-time.
+        Execute subprocess and yield (output_line, source, is_error) tuples.
 
-        Windows-compatible implementation using proper pipe handling with threading.
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
 
         Args:
             command: Command to execute (as list of strings)
@@ -81,113 +78,43 @@ class ExecutionMonitor:
 
         try:
             # Windows-specific subprocess creation
-            # Use CREATE_NEW_PROCESS_GROUP on Windows to avoid socket issues
             creation_flags = 0
             if sys.platform == "win32":
                 creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
 
-            process = subprocess.Popen(
+            # Use subprocess.run() instead of Popen for better Windows compatibility
+            process = subprocess.run(
                 command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
+                capture_output=True,
                 text=True,
-                bufsize=1,  # Line buffering
-                universal_newlines=True,
+                timeout=timeout,
                 creationflags=creation_flags,
             )
 
-            # Use threading for non-blocking reads on Windows
-            stdout_queue = queue.Queue()  # type: ignore[var-annotated]
-            stderr_queue = queue.Queue()  # type: ignore[var-annotated]
-            error_event = threading.Event()
+            # Yield stdout line by line
+            if process.stdout:
+                for line in process.stdout.splitlines():
+                    is_error = (
+                        "error" in line.lower()
+                        or "exception" in line.lower()
+                        or "traceback" in line.lower()
+                    )
+                    logger.debug(f"stdout: {line}")
+                    yield (line, "stdout", is_error)
 
-            def read_output(pipe, queue_obj, source):
-                """Read from pipe and put lines into queue."""
-                try:
-                    for line in iter(pipe.readline, ""):
-                        if line:
-                            queue_obj.put((line.rstrip(), source))
-                        if error_event.is_set():
-                            break
-                except Exception as e:
-                    logger.error(f"Error reading {source}: {e}")
-                finally:
-                    queue_obj.put(None)  # Signal end of stream
-
-            # Start reader threads
-            stdout_thread = threading.Thread(
-                target=read_output, args=(process.stdout, stdout_queue, "stdout"), daemon=True
-            )
-            stderr_thread = (
-                threading.Thread(
-                    target=read_output, args=(process.stderr, stderr_queue, "stderr"), daemon=True
-                )
-                if capture_stderr
-                else None
-            )
-
-            stdout_thread.start()
-            if stderr_thread:
-                stderr_thread.start()
-
-            # Yield output as it arrives
-            stdout_done = False
-            stderr_done = False
-
-            start_time = time.time()
-            while not (stdout_done and (stderr_done or not capture_stderr)):
-                # Check timeout
-                if time.time() - start_time > timeout:
-                    logger.warning(f"Subprocess execution timeout after {timeout}s")
-                    error_event.set()
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                    yield ("", "error", True)
-                    return
-
-                # Try to get output from queues (non-blocking)
-                try:
-                    if not stdout_done:
-                        item = stdout_queue.get_nowait()
-                        if item is None:
-                            stdout_done = True
-                        else:
-                            output, source = item
-                            is_error = (
-                                "error" in output.lower()
-                                or "exception" in output.lower()
-                                or "traceback" in output.lower()
-                            )
-                            logger.debug(f"{source}: {output}")
-                            yield (output, source, is_error)
-                except queue.Empty:
-                    pass
-
-                try:
-                    if capture_stderr and not stderr_done:
-                        item = stderr_queue.get_nowait()
-                        if item is None:
-                            stderr_done = True
-                        else:
-                            output, source = item
-                            logger.debug(f"{source}: {output}")
-                            yield (output, source, True)  # stderr is always error
-                except queue.Empty:
-                    pass
-
-                time.sleep(0.01)  # Small sleep to prevent busy waiting
-
-            # Wait for process to complete
-            process.wait()
+            # Yield stderr line by line if captured
+            if capture_stderr and process.stderr:
+                for line in process.stderr.splitlines():
+                    logger.debug(f"stderr: {line}")
+                    yield (line, "stderr", True)  # stderr is always error
 
             # If process exited with error code, report it
             if process.returncode != 0:
                 yield (f"Process exited with code {process.returncode}", "error", True)
 
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Subprocess execution timeout after {timeout}s")
+            yield ("", "error", True)
         except Exception as e:
             logger.error(f"Error executing subprocess: {e}", exc_info=True)
             yield (f"Execution error: {str(e)}", "error", True)

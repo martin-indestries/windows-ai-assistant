@@ -46,6 +46,8 @@ class SubprocessActions:
         """
         Execute a system command.
 
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
+
         Args:
             command: Command to execute (string or list)
             shell: Whether to use shell execution
@@ -56,6 +58,8 @@ class SubprocessActions:
         Returns:
             ActionResult with command output or error
         """
+        import time
+
         cmd_str = command if isinstance(command, str) else " ".join(command)
         logger.info(f"Executing command: {cmd_str[:100]}...")
 
@@ -81,137 +85,59 @@ class SubprocessActions:
                 creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
 
             if capture_output:
-                import queue
-                import threading
-                import time
-
                 logger.info(
-                    f"SubprocessActions: Calling subprocess.Popen (capture_output=True) "
+                    f"SubprocessActions: Calling subprocess.run (capture_output=True) "
                     f"with creationflags={creation_flags}"
                 )
-                process = subprocess.Popen(
+                start_time = time.time()
+
+                # Use subprocess.run() instead of Popen for better Windows compatibility
+                process = subprocess.run(
                     command,
                     shell=shell,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
                     text=True,
-                    bufsize=1,
-                    universal_newlines=True,
+                    timeout=self.timeout,
                     cwd=working_directory,
                     env=env,
                     creationflags=creation_flags,
                 )
 
-                stdout_queue: queue.Queue = queue.Queue()
-                stderr_queue: queue.Queue = queue.Queue()
-                error_event = threading.Event()
+                return_code = process.returncode
+                stdout = process.stdout.strip() if process.stdout else ""
+                stderr = process.stderr.strip() if process.stderr else ""
 
-                def read_output(pipe, queue_obj):
-                    try:
-                        for line in iter(pipe.readline, ""):
-                            if line:
-                                queue_obj.put(line)
-                            if error_event.is_set():
-                                break
-                    except Exception as e:
-                        logger.debug(f"Pipe read error: {e}")
-                    finally:
-                        queue_obj.put(None)
-
-                stdout_thread = threading.Thread(
-                    target=read_output, args=(process.stdout, stdout_queue), daemon=True
+                return ActionResult(
+                    success=return_code == 0,
+                    action_type="execute_command",
+                    message=f"Command executed with return code {return_code}",
+                    data={
+                        "command": command,
+                        "shell": shell,
+                        "return_code": return_code,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "working_directory": working_directory,
+                        "success": return_code == 0,
+                    },
+                    error=stderr if return_code != 0 else None,
+                    execution_time_ms=(time.time() - start_time) * 1000,
                 )
-                stderr_thread = threading.Thread(
-                    target=read_output, args=(process.stderr, stderr_queue), daemon=True
-                )
-
-                stdout_thread.start()
-                stderr_thread.start()
-
-                all_stdout = []
-                all_stderr = []
-                stdout_done = False
-                stderr_done = False
-                start_time = time.time()
-
-                try:
-                    while not (stdout_done and stderr_done):
-                        if time.time() - start_time > self.timeout:
-                            error_event.set()
-                            process.terminate()
-                            try:
-                                process.wait(timeout=5)
-                            except subprocess.TimeoutExpired:
-                                process.kill()
-                            raise subprocess.TimeoutExpired(cmd_str, self.timeout)
-
-                        try:
-                            item = stdout_queue.get_nowait()
-                            if item is None:
-                                stdout_done = True
-                            else:
-                                all_stdout.append(item)
-                        except queue.Empty:
-                            pass
-
-                        try:
-                            item = stderr_queue.get_nowait()
-                            if item is None:
-                                stderr_done = True
-                            else:
-                                all_stderr.append(item)
-                        except queue.Empty:
-                            pass
-
-                        time.sleep(0.01)
-
-                    process.wait()
-                    return_code = process.returncode
-                    stdout = "".join(all_stdout).strip()
-                    stderr = "".join(all_stderr).strip()
-
-                    return ActionResult(
-                        success=return_code == 0,
-                        action_type="execute_command",
-                        message=f"Command executed with return code {return_code}",
-                        data={
-                            "command": command,
-                            "shell": shell,
-                            "return_code": return_code,
-                            "stdout": stdout,
-                            "stderr": stderr,
-                            "working_directory": working_directory,
-                            "success": return_code == 0,
-                        },
-                        error=stderr if return_code != 0 else None,
-                        execution_time_ms=(time.time() - start_time) * 1000,
-                    )
-
-                except Exception as e:
-                    error_event.set()
-                    if process.poll() is None:
-                        process.terminate()
-                    raise e
             else:
                 # For non-captured output, run without capture
                 logger.info(
-                    f"SubprocessActions: Calling subprocess.Popen (capture_output=False) "
+                    f"SubprocessActions: Calling subprocess.run (capture_output=False) "
                     f"with creationflags={creation_flags}"
                 )
-                process = subprocess.Popen(
+                process = subprocess.run(  # type: ignore[assignment]
                     command,
                     shell=shell,
-                    stdout=None,
-                    stderr=None,
                     stdin=subprocess.DEVNULL,
-                    text=True,
+                    timeout=self.timeout,
                     cwd=working_directory,
                     env=env,
                     creationflags=creation_flags,
                 )
-
-                process.wait(timeout=self.timeout)
 
                 return ActionResult(
                     success=process.returncode == 0,

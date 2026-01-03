@@ -752,8 +752,7 @@ class ActionExecutor:
         """
         Execute a shell command with streaming output.
 
-        Yields status updates as the command executes, then returns
-        the final ActionResult.
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
 
         Args:
             command: Command to execute
@@ -761,11 +760,12 @@ class ActionExecutor:
             timeout: Timeout in seconds
 
         Yields:
-            Status messages during execution
+            Status messages and output
 
         Returns:
             Final ActionResult with execution details
         """
+        import sys
         import time
 
         start_time = time.time()
@@ -786,157 +786,75 @@ class ActionExecutor:
 
             yield f"Executing: {command}\n"
 
-            import queue
-            import sys
-            import threading
-
             creation_flags = 0
             if sys.platform == "win32":
                 creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
 
-            logger.info(
-                f"ActionExecutor: Calling subprocess.Popen with creationflags={creation_flags}"
-            )
-            process = subprocess.Popen(
+            # Use subprocess.run() instead of Popen for better Windows compatibility
+            process = subprocess.run(
                 command,
                 shell=shell,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.DEVNULL,
+                capture_output=True,
                 text=True,
-                bufsize=1,
-                universal_newlines=True,
+                timeout=timeout,
                 creationflags=creation_flags,
             )
 
-            # Use threading for non-blocking reads on Windows
-            stdout_queue = queue.Queue()  # type: ignore[var-annotated]
-            stderr_queue = queue.Queue()  # type: ignore[var-annotated]
-            error_event = threading.Event()
+            # Yield stdout line by line
+            if process.stdout:
+                for line in process.stdout.splitlines(keepends=True):
+                    yield line
 
-            def read_output(pipe, queue_obj, source):
-                """Read from pipe and put lines into queue."""
-                try:
-                    for line in iter(pipe.readline, ""):
-                        if line:
-                            queue_obj.put((line, source))
-                        if error_event.is_set():
-                            break
-                except Exception as e:
-                    logger.error(f"Error reading {source}: {e}")
-                finally:
-                    queue_obj.put(None)  # Signal end of stream
+            # Yield stderr line by line
+            if process.stderr:
+                for line in process.stderr.splitlines(keepends=True):
+                    yield f"[stderr] {line}"
 
-            # Start reader threads
-            stdout_thread = threading.Thread(
-                target=read_output, args=(process.stdout, stdout_queue, "stdout"), daemon=True
-            )
-            stderr_thread = threading.Thread(
-                target=read_output, args=(process.stderr, stderr_queue, "stderr"), daemon=True
-            )
+            exit_code = process.returncode
+            stdout_str = process.stdout if process.stdout else ""
+            stderr_str = process.stderr if process.stderr else ""
 
-            stdout_thread.start()
-            stderr_thread.start()
-
-            all_stdout = []
-            all_stderr = []
-            stdout_done = False
-            stderr_done = False
-
-            try:
-                while not (stdout_done and stderr_done):
-                    # Check timeout
-                    if time.time() - start_time > timeout:
-                        logger.warning(f"Command execution timeout after {timeout}s")
-                        error_event.set()
-                        process.terminate()
-                        try:
-                            process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            process.kill()
-                        yield f"\n[ERROR] Command timed out after {timeout}s\n"
-                        result = ActionResult(
-                            success=False,
-                            action_type="execute_command",
-                            message=f"Command timed out after {timeout}s",
-                            error=f"Execution exceeded {timeout}s timeout",
-                            data={"command": command},
-                            execution_time_ms=(time.time() - start_time) * 1000,
-                        )
-                        return result
-
-                    # Try to get output from queues
-                    try:
-                        item = stdout_queue.get_nowait()
-                        if item is None:
-                            stdout_done = True
-                        else:
-                            line, _ = item
-                            all_stdout.append(line)
-                            yield line
-                    except queue.Empty:
-                        pass
-
-                    try:
-                        item = stderr_queue.get_nowait()
-                        if item is None:
-                            stderr_done = True
-                        else:
-                            line, _ = item
-                            all_stderr.append(line)
-                            yield f"[stderr] {line}"
-                    except queue.Empty:
-                        pass
-
-                    time.sleep(0.01)
-
-                process.wait()
-                exit_code = process.returncode
-                stdout_str = "".join(all_stdout)
-                stderr_str = "".join(all_stderr)
-
-                if exit_code == 0:
-                    result = ActionResult(
-                        success=True,
-                        action_type="execute_command",
-                        message="Command executed successfully",
-                        data={
-                            "command": command,
-                            "exit_code": exit_code,
-                            "output": stdout_str,
-                        },
-                        execution_time_ms=(time.time() - start_time) * 1000,
-                    )
-                else:
-                    result = ActionResult(
-                        success=False,
-                        action_type="execute_command",
-                        message=f"Command failed with exit code {exit_code}",
-                        error=stderr_str or "Unknown error",
-                        data={
-                            "command": command,
-                            "exit_code": exit_code,
-                            "output": stdout_str,
-                        },
-                        execution_time_ms=(time.time() - start_time) * 1000,
-                    )
-
-                logger.info("Command executed: %s (exit code: %s)", command, exit_code)
-                return result
-
-            except subprocess.TimeoutExpired:
-                process.kill()
-                logger.error(f"Command timed out: {command}")
-                yield f"[ERROR] Command timed out after {timeout}s\n"
+            if exit_code == 0:
+                result = ActionResult(
+                    success=True,
+                    action_type="execute_command",
+                    message="Command executed successfully",
+                    data={
+                        "command": command,
+                        "exit_code": exit_code,
+                        "output": stdout_str,
+                    },
+                    execution_time_ms=(time.time() - start_time) * 1000,
+                )
+            else:
                 result = ActionResult(
                     success=False,
                     action_type="execute_command",
-                    message=f"Command timed out after {timeout}s",
-                    error=f"Execution exceeded {timeout}s timeout",
-                    data={"command": command},
+                    message=f"Command failed with exit code {exit_code}",
+                    error=stderr_str or "Unknown error",
+                    data={
+                        "command": command,
+                        "exit_code": exit_code,
+                        "output": stdout_str,
+                    },
                     execution_time_ms=(time.time() - start_time) * 1000,
                 )
-                return result
+
+            logger.info("Command executed: %s (exit code: %s)", command, exit_code)
+            return result
+
+        except subprocess.TimeoutExpired:
+            logger.error(f"Command timed out: {command}")
+            yield f"[ERROR] Command timed out after {timeout}s\n"
+            result = ActionResult(
+                success=False,
+                action_type="execute_command",
+                message=f"Command timed out after {timeout}s",
+                error=f"Execution exceeded {timeout}s timeout",
+                data={"command": command},
+                execution_time_ms=(time.time() - start_time) * 1000,
+            )
+            return result
 
         except Exception as e:
             logger.error(f"Error executing command: {e}")

@@ -89,6 +89,8 @@ class PowerShellActions:
         """
         Execute a PowerShell command.
 
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
+
         Args:
             command: PowerShell command to execute
             capture_output: Whether to capture stdout/stderr
@@ -119,138 +121,70 @@ class PowerShellActions:
                 creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
 
             if capture_output:
-                import queue
-                import threading
-                import time
-
                 logger.info(
-                    f"PowerShellActions: Calling subprocess.Popen (capture_output=True) "
+                    f"PowerShellActions: Calling subprocess.run (capture_output=True) "
                     f"with creationflags={creation_flags}"
                 )
-                process = subprocess.Popen(
-                    self.powershell_cmd + [command],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    stdin=subprocess.PIPE if not shell else subprocess.DEVNULL,
-                    text=True,
-                    bufsize=1,
-                    universal_newlines=True,
-                    creationflags=creation_flags,
-                )
 
-                stdout_queue: queue.Queue = queue.Queue()
-                stderr_queue: queue.Queue = queue.Queue()
-                error_event = threading.Event()
-
-                def read_output(pipe, queue_obj):
-                    try:
-                        for line in iter(pipe.readline, ""):
-                            if line:
-                                queue_obj.put(line)
-                            if error_event.is_set():
-                                break
-                    except Exception as e:
-                        logger.debug(f"Pipe read error: {e}")
-                    finally:
-                        queue_obj.put(None)
-
-                stdout_thread = threading.Thread(
-                    target=read_output, args=(process.stdout, stdout_queue), daemon=True
-                )
-                stderr_thread = threading.Thread(
-                    target=read_output, args=(process.stderr, stderr_queue), daemon=True
-                )
-
-                stdout_thread.start()
-                stderr_thread.start()
-
-                if not shell:
-                    try:
-                        if process.stdin:
-                            process.stdin.write(command)
-                            process.stdin.close()
-                    except Exception as e:
-                        logger.error(f"Error writing to powershell stdin: {e}")
-
-                all_stdout = []
-                all_stderr = []
-                stdout_done = False
-                stderr_done = False
-                start_time = time.time()
-
-                try:
-                    while not (stdout_done and stderr_done):
-                        if time.time() - start_time > self.timeout:
-                            error_event.set()
-                            process.terminate()
-                            try:
-                                process.wait(timeout=5)
-                            except subprocess.TimeoutExpired:
-                                process.kill()
-                            raise subprocess.TimeoutExpired(command, self.timeout)
-
-                        try:
-                            item = stdout_queue.get_nowait()
-                            if item is None:
-                                stdout_done = True
-                            else:
-                                all_stdout.append(item)
-                        except queue.Empty:
-                            pass
-
-                        try:
-                            item = stderr_queue.get_nowait()
-                            if item is None:
-                                stderr_done = True
-                            else:
-                                all_stderr.append(item)
-                        except queue.Empty:
-                            pass
-
-                        time.sleep(0.01)
-
-                    process.wait()
-                    return_code = process.returncode
-                    stdout = "".join(all_stdout).strip()
-                    stderr = "".join(all_stderr).strip()
-
-                    return ActionResult(
-                        success=return_code == 0,
-                        action_type="execute_command",
-                        message=f"PowerShell command executed with return code {return_code}",
-                        data={
-                            "command": command,
-                            "return_code": return_code,
-                            "stdout": stdout,
-                            "stderr": stderr,
-                            "success": return_code == 0,
-                        },
-                        error=stderr if return_code != 0 else None,
+                # Use subprocess.run() instead of Popen for better Windows compatibility
+                if shell:
+                    # Execute command directly via -Command argument
+                    process = subprocess.run(
+                        self.powershell_cmd + [command],
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout,
+                        creationflags=creation_flags,
                     )
-                except Exception as e:
-                    error_event.set()
-                    if process.poll() is None:
-                        process.terminate()
-                    raise e
+                else:
+                    # For stdin-based execution, we still need Popen for stdin
+                    process = subprocess.run(
+                        self.powershell_cmd,
+                        input=command,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout,
+                        creationflags=creation_flags,
+                    )
+
+                return_code = process.returncode
+                stdout = process.stdout.strip() if process.stdout else ""
+                stderr = process.stderr.strip() if process.stderr else ""
+
+                return ActionResult(
+                    success=return_code == 0,
+                    action_type="execute_command",
+                    message=f"PowerShell command executed with return code {return_code}",
+                    data={
+                        "command": command,
+                        "return_code": return_code,
+                        "stdout": stdout,
+                        "stderr": stderr,
+                        "success": return_code == 0,
+                    },
+                    error=stderr if return_code != 0 else None,
+                )
             else:
                 # For non-captured output, run without capture
                 logger.info(
-                    f"PowerShellActions: Calling subprocess.Popen (capture_output=False) "
+                    f"PowerShellActions: Calling subprocess.run (capture_output=False) "
                     f"with creationflags={creation_flags}"
                 )
-                process = subprocess.Popen(
-                    self.powershell_cmd + [command],
-                    stdin=subprocess.PIPE if not shell else subprocess.DEVNULL,
-                    stdout=None,
-                    stderr=None,
-                    text=True,
-                    creationflags=creation_flags,
-                )
-
-                if not shell:
-                    process.communicate(input=command, timeout=self.timeout)
+                if shell:
+                    process = subprocess.run(  # type: ignore[assignment]
+                        self.powershell_cmd + [command],
+                        stdin=subprocess.DEVNULL,
+                        timeout=self.timeout,
+                        creationflags=creation_flags,
+                    )
                 else:
-                    process.wait(timeout=self.timeout)
+                    process = subprocess.run(  # type: ignore[assignment]
+                        self.powershell_cmd,
+                        input=command,
+                        stdin=subprocess.PIPE,
+                        timeout=self.timeout,
+                        creationflags=creation_flags,
+                    )
 
                 return ActionResult(
                     success=process.returncode == 0,
@@ -284,6 +218,8 @@ class PowerShellActions:
         """
         Execute a PowerShell script.
 
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
+
         Args:
             script_content: PowerShell script content to execute
 
@@ -313,118 +249,38 @@ class PowerShellActions:
             if sys.platform == "win32":
                 creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
 
-            import queue
-            import threading
-            import time
-
             logger.info(
-                f"PowerShellActions: Calling subprocess.Popen (execute_script) "
+                f"PowerShellActions: Calling subprocess.run (execute_script) "
                 f"with creationflags={creation_flags}"
             )
-            process = subprocess.Popen(
+
+            # Use subprocess.run() instead of Popen for better Windows compatibility
+            process = subprocess.run(
                 self.powershell_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.PIPE,
+                input=script_content,
+                capture_output=True,
                 text=True,
-                bufsize=1,
-                universal_newlines=True,
+                timeout=self.timeout,
                 creationflags=creation_flags,
             )
 
-            stdout_queue: queue.Queue = queue.Queue()
-            stderr_queue: queue.Queue = queue.Queue()
-            error_event = threading.Event()
+            return_code = process.returncode
+            stdout = process.stdout.strip() if process.stdout else ""
+            stderr = process.stderr.strip() if process.stderr else ""
 
-            def read_output(pipe, queue_obj):
-                try:
-                    for line in iter(pipe.readline, ""):
-                        if line:
-                            queue_obj.put(line)
-                        if error_event.is_set():
-                            break
-                except Exception as e:
-                    logger.debug(f"Pipe read error: {e}")
-                finally:
-                    queue_obj.put(None)
-
-            stdout_thread = threading.Thread(
-                target=read_output, args=(process.stdout, stdout_queue), daemon=True
+            return ActionResult(
+                success=return_code == 0,
+                action_type="execute_script",
+                message=f"PowerShell script executed with return code {return_code}",
+                data={
+                    "script_length": len(script_content),
+                    "return_code": return_code,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "success": return_code == 0,
+                },
+                error=stderr if return_code != 0 else None,
             )
-            stderr_thread = threading.Thread(
-                target=read_output, args=(process.stderr, stderr_queue), daemon=True
-            )
-
-            stdout_thread.start()
-            stderr_thread.start()
-
-            try:
-                if process.stdin:
-                    process.stdin.write(script_content)
-                    process.stdin.close()
-            except Exception as e:
-                logger.error(f"Error writing to powershell stdin: {e}")
-
-            all_stdout = []
-            all_stderr = []
-            stdout_done = False
-            stderr_done = False
-            start_time = time.time()
-
-            try:
-                while not (stdout_done and stderr_done):
-                    if time.time() - start_time > self.timeout:
-                        error_event.set()
-                        process.terminate()
-                        try:
-                            process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            process.kill()
-                        raise subprocess.TimeoutExpired("PowerShell script", self.timeout)
-
-                    try:
-                        item = stdout_queue.get_nowait()
-                        if item is None:
-                            stdout_done = True
-                        else:
-                            all_stdout.append(item)
-                    except queue.Empty:
-                        pass
-
-                    try:
-                        item = stderr_queue.get_nowait()
-                        if item is None:
-                            stderr_done = True
-                        else:
-                            all_stderr.append(item)
-                    except queue.Empty:
-                        pass
-
-                    time.sleep(0.01)
-
-                process.wait()
-                return_code = process.returncode
-                stdout = "".join(all_stdout).strip()
-                stderr = "".join(all_stderr).strip()
-
-                return ActionResult(
-                    success=return_code == 0,
-                    action_type="execute_script",
-                    message=f"PowerShell script executed with return code {return_code}",
-                    data={
-                        "script_length": len(script_content),
-                        "return_code": return_code,
-                        "stdout": stdout,
-                        "stderr": stderr,
-                        "success": return_code == 0,
-                    },
-                    error=stderr if return_code != 0 else None,
-                )
-            except Exception as e:
-                error_event.set()
-                if process.poll() is None:
-                    process.terminate()
-                raise e
 
         except subprocess.TimeoutExpired:
             logger.error("PowerShell script timed out")

@@ -42,5 +42,6 @@ tests/test_adaptive_fixing.py
 tests/test_chat.py
 tests/test_cli.py
 tests/test_dual_execution_orchestrator.py
+tests/test_execution_monitor_windows.py
 tests/test_execution_router.py
 tests/test_execution_verifier.py

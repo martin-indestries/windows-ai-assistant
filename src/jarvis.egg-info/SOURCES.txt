@@ -3,12 +3,15 @@ pyproject.toml
 src/jarvis/__init__.py
 src/jarvis/__main__.py
 src/jarvis/action_executor.py
+src/jarvis/action_fallback_strategies.py
 src/jarvis/app.py
 src/jarvis/chat.py
 src/jarvis/cli.py
 src/jarvis/config.py
 src/jarvis/container.py
 src/jarvis/document_parser.py
+src/jarvis/execution_verifier.py
+src/jarvis/execution_verifier_old.py
 src/jarvis/intent_classifier.py
 src/jarvis/json_backend.py
 src/jarvis/learn_cli.py
@@ -30,3 +33,4 @@ src/jarvis.egg-info/top_level.txt
 tests/test_action_executor.py
 tests/test_chat.py
 tests/test_cli.py
+tests/test_execution_verifier.py

@@ -67,6 +67,7 @@ class ChatSession:
         reasoning_module: Optional[ReasoningModule] = None,
         config: Optional[JarvisConfig] = None,
         controller: Optional[Controller] = None,
+        dual_execution_orchestrator: Optional[Any] = None,
     ) -> None:
         """
         Initialize a chat session.
@@ -76,11 +77,13 @@ class ChatSession:
             reasoning_module: Optional reasoning module for planning
             config: Optional configuration
             controller: Optional controller for dual-model processing
+            dual_execution_orchestrator: Optional dual execution orchestrator for code execution
         """
         self.orchestrator = orchestrator
         self.reasoning_module = reasoning_module
         self.config = config
         self.controller = controller
+        self.dual_execution_orchestrator = dual_execution_orchestrator
         self.history: List[ChatMessage] = []
         self.is_running = False
 
@@ -311,7 +314,8 @@ class ChatSession:
         """
         Process a user command and stream formatted response chunks.
 
-        Uses the controller (dual-model stack) if available, otherwise
+        Uses the dual execution orchestrator for code execution requests,
+        the controller (dual-model stack) if available, otherwise
         falls back to orchestrator + reasoning module.
 
         Args:
@@ -329,6 +333,31 @@ class ChatSession:
         full_response_parts = []
 
         try:
+            # First, check if this is a code execution request for dual execution orchestrator
+            if self.dual_execution_orchestrator:
+                # Check if user input matches code execution patterns
+                code_keywords = ["write", "code", "program", "script", "run", "execute", "create", "generate", "build", "make", "implement", "develop"]
+                input_lower = user_input.lower()
+                has_code_keyword = any(keyword in input_lower for keyword in code_keywords)
+
+                if has_code_keyword:
+                    logger.debug("Using dual execution orchestrator for code execution")
+                    try:
+                        for chunk in self.dual_execution_orchestrator.process_request(user_input):
+                            yield chunk
+                            full_response_parts.append(chunk)
+
+                        full_response = "".join(full_response_parts)
+                        self.add_message(
+                            "assistant",
+                            full_response,
+                            metadata={"execution_mode": "dual_execution"},
+                        )
+                        return
+                    except Exception as e:
+                        logger.exception(f"Error using dual execution orchestrator: {e}")
+                        logger.info("Falling back to standard processing")
+
             # If controller is available, use the dual-model stack
             if self.controller:
                 logger.debug("Using controller for command processing")

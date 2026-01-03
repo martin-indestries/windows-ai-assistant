@@ -11,6 +11,7 @@ from typing import Optional
 from jarvis.action_executor import ActionExecutor
 from jarvis.brain.server import BrainServer, BrainServerError
 from jarvis.config import ConfigLoader, JarvisConfig
+from jarvis.dual_execution_orchestrator import DualExecutionOrchestrator
 from jarvis.executor.server import ExecutorServer, ExecutorServerError
 from jarvis.llm_client import LLMClient
 from jarvis.logging_config import setup_logging
@@ -136,6 +137,7 @@ class Container:
         self._action_executor: Optional[ActionExecutor] = None
         self._system_action_router = None
         self._dual_model_manager: Optional[DualModelManager] = None
+        self._dual_execution_orchestrator: Optional[DualExecutionOrchestrator] = None
 
     def get_config_loader(self, config_path: Optional[str] = None) -> ConfigLoader:
         """
@@ -412,3 +414,19 @@ class Container:
             config = self.get_config(config_path=config_path)
             self._dual_model_manager = DualModelManager(config=config)
         return self._dual_model_manager
+
+    def get_dual_execution_orchestrator(self, config_path: Optional[str] = None) -> DualExecutionOrchestrator:
+        """
+        Get or create the dual execution orchestrator.
+
+        Args:
+            config_path: Optional path to configuration file
+
+        Returns:
+            DualExecutionOrchestrator instance
+        """
+        if self._dual_execution_orchestrator is None:
+            llm_client = self.get_llm_client(config_path=config_path)
+            self._dual_execution_orchestrator = DualExecutionOrchestrator(llm_client=llm_client)
+        return self._dual_execution_orchestrator
+

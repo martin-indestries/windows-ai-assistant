@@ -29,6 +29,7 @@ class GUIApp(customtkinter.CTk):
         reasoning_module: Optional[ReasoningModule] = None,
         config: Optional[JarvisConfig] = None,
         voice_callback: Optional[Callable[[str], None]] = None,
+        dual_execution_orchestrator: Optional[Any] = None,
     ) -> None:
         """
         Initialize the GUI application.
@@ -38,6 +39,7 @@ class GUIApp(customtkinter.CTk):
             reasoning_module: Optional reasoning module for planning
             config: Optional configuration
             voice_callback: Optional callback for voice input
+            dual_execution_orchestrator: Optional dual execution orchestrator for code execution
         """
         super().__init__()
 
@@ -45,12 +47,14 @@ class GUIApp(customtkinter.CTk):
         self.reasoning_module = reasoning_module
         self.config = config or JarvisConfig()
         self.voice_callback = voice_callback
+        self.dual_execution_orchestrator = dual_execution_orchestrator
 
         # Create chat session
         self.chat_session = ChatSession(
             orchestrator=orchestrator,
             reasoning_module=reasoning_module,
             config=config,
+            dual_execution_orchestrator=dual_execution_orchestrator,
         )
 
         # GUI state
@@ -327,6 +331,7 @@ def create_gui_app(
     reasoning_module: Optional[ReasoningModule] = None,
     config: Optional[JarvisConfig] = None,
     voice_callback: Optional[Callable[[str], None]] = None,
+    dual_execution_orchestrator: Optional[Any] = None,
 ) -> GUIApp:
     """
     Create and return a GUI application instance.
@@ -336,6 +341,7 @@ def create_gui_app(
         reasoning_module: Optional reasoning module for planning
         config: Optional configuration
         voice_callback: Optional callback for voice input
+        dual_execution_orchestrator: Optional dual execution orchestrator for code execution
 
     Returns:
         Configured GUIApp instance
@@ -345,4 +351,5 @@ def create_gui_app(
         reasoning_module=reasoning_module,
         config=config,
         voice_callback=voice_callback,
+        dual_execution_orchestrator=dual_execution_orchestrator,
     )

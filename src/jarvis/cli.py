@@ -160,11 +160,13 @@ def main(argv: Optional[list] = None) -> int:
                 )
 
             # Create and run GUI
+            dual_execution_orchestrator = container.get_dual_execution_orchestrator(config_path=args.config)
             gui_app = create_gui_app(
                 orchestrator=orchestrator,
                 reasoning_module=reasoning_module,
                 config=config,
                 voice_callback=voice_callback,
+                dual_execution_orchestrator=dual_execution_orchestrator,
             )
 
             # If voice is enabled, connect the voice output to the GUI input
@@ -183,10 +185,12 @@ def main(argv: Optional[list] = None) -> int:
         # Handle chat mode
         if args.chat:
             reasoning_module = container.get_reasoning_module(config_path=args.config)
+            dual_execution_orchestrator = container.get_dual_execution_orchestrator(config_path=args.config)
             chat_session = ChatSession(
                 orchestrator=orchestrator,
                 reasoning_module=reasoning_module,
                 config=config,
+                dual_execution_orchestrator=dual_execution_orchestrator,
             )
             return chat_session.run_interactive_loop()
 

@@ -8,7 +8,7 @@ dry-run semantics and safety checks.
 import logging
 import subprocess
 import sys
-from typing import Dict, List, Optional, Union
+from typing import List
 
 from jarvis.action_executor import ActionResult
 
@@ -44,35 +44,52 @@ class PowerShellActions:
             List of command parts to execute PowerShell
         """
         if sys.platform == "win32":
+            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
             # On Windows, try powershell.exe first, then fallback to pwsh.exe
             try:
-                subprocess.run(["powershell.exe", "-Command", "Get-Host"], 
-                             capture_output=True, timeout=5, check=True)
+                subprocess.run(
+                    ["powershell.exe", "-Command", "Get-Host"],
+                    capture_output=True,
+                    timeout=5,
+                    check=True,
+                    creationflags=creation_flags,
+                    stdin=subprocess.DEVNULL,
+                )
                 return ["powershell.exe", "-Command", "-"]
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
                 try:
-                    subprocess.run(["pwsh.exe", "-Command", "Get-Host"], 
-                                 capture_output=True, timeout=5, check=True)
+                    subprocess.run(
+                        ["pwsh.exe", "-Command", "Get-Host"],
+                        capture_output=True,
+                        timeout=5,
+                        check=True,
+                        creationflags=creation_flags,
+                        stdin=subprocess.DEVNULL,
+                    )
                     return ["pwsh.exe", "-Command", "-"]
-                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+                except (
+                    subprocess.CalledProcessError,
+                    subprocess.TimeoutExpired,
+                    FileNotFoundError,
+                ):
                     return ["powershell.exe", "-Command", "-"]  # Fallback
         else:
             # On non-Windows, try pwsh (PowerShell Core)
             try:
-                subprocess.run(["pwsh", "-Command", "Get-Host"], 
-                             capture_output=True, timeout=5, check=True)
+                subprocess.run(
+                    ["pwsh", "-Command", "Get-Host"], capture_output=True, timeout=5, check=True
+                )
                 return ["pwsh", "-Command", "-"]
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
                 return ["pwsh", "-Command", "-"]  # Fallback
 
     def execute_command(
-        self, 
-        command: str, 
-        capture_output: bool = True,
-        shell: bool = False
+        self, command: str, capture_output: bool = True, shell: bool = False
     ) -> ActionResult:
         """
         Execute a PowerShell command.
+
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
 
         Args:
             command: PowerShell command to execute
@@ -83,7 +100,7 @@ class PowerShellActions:
             ActionResult with command output or error
         """
         logger.info(f"Executing PowerShell command: {command[:100]}...")
-        
+
         if self.dry_run:
             return ActionResult(
                 success=True,
@@ -93,52 +110,82 @@ class PowerShellActions:
                     "command": command,
                     "capture_output": capture_output,
                     "shell": shell,
-                    "dry_run": True
+                    "dry_run": True,
                 },
-                execution_time_ms=0.0
+                execution_time_ms=0.0,
             )
 
         try:
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+
             if capture_output:
-                result = subprocess.run(
-                    self.powershell_cmd + [command],
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout,
-                    input=command if not shell else None
+                logger.info(
+                    f"PowerShellActions: Calling subprocess.run (capture_output=True) "
+                    f"with creationflags={creation_flags}"
                 )
-                
-                stdout = result.stdout.strip() if result.stdout else ""
-                stderr = result.stderr.strip() if result.stderr else ""
-                
+
+                # Use subprocess.run() instead of Popen for better Windows compatibility
+                if shell:
+                    # Execute command directly via -Command argument
+                    process = subprocess.run(
+                        self.powershell_cmd + [command],
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout,
+                        creationflags=creation_flags,
+                    )
+                else:
+                    # For stdin-based execution, we still need Popen for stdin
+                    process = subprocess.run(
+                        self.powershell_cmd,
+                        input=command,
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout,
+                        creationflags=creation_flags,
+                    )
+
+                return_code = process.returncode
+                stdout = process.stdout.strip() if process.stdout else ""
+                stderr = process.stderr.strip() if process.stderr else ""
+
                 return ActionResult(
-                    success=result.returncode == 0,
+                    success=return_code == 0,
                     action_type="execute_command",
-                    message=f"PowerShell command executed with return code {result.returncode}",
+                    message=f"PowerShell command executed with return code {return_code}",
                     data={
                         "command": command,
-                        "return_code": result.returncode,
+                        "return_code": return_code,
                         "stdout": stdout,
                         "stderr": stderr,
-                        "success": result.returncode == 0
+                        "success": return_code == 0,
                     },
-                    error=stderr if result.returncode != 0 else None
+                    error=stderr if return_code != 0 else None,
                 )
             else:
                 # For non-captured output, run without capture
-                process = subprocess.Popen(
-                    self.powershell_cmd + [command],
-                    stdin=subprocess.PIPE if not shell else None,
-                    stdout=None,
-                    stderr=None,
-                    text=True
+                logger.info(
+                    f"PowerShellActions: Calling subprocess.run (capture_output=False) "
+                    f"with creationflags={creation_flags}"
                 )
-                
-                if not shell:
-                    process.communicate(input=command, timeout=self.timeout)
+                if shell:
+                    process = subprocess.run(  # type: ignore[assignment]
+                        self.powershell_cmd + [command],
+                        stdin=subprocess.DEVNULL,
+                        timeout=self.timeout,
+                        creationflags=creation_flags,
+                    )
                 else:
-                    process.wait(timeout=self.timeout)
-                
+                    process = subprocess.run(  # type: ignore[assignment]
+                        self.powershell_cmd,
+                        input=command,
+                        stdin=subprocess.PIPE,
+                        timeout=self.timeout,
+                        creationflags=creation_flags,
+                    )
+
                 return ActionResult(
                     success=process.returncode == 0,
                     action_type="execute_command",
@@ -146,17 +193,17 @@ class PowerShellActions:
                     data={
                         "command": command,
                         "return_code": process.returncode,
-                        "capture_output": False
-                    }
+                        "capture_output": False,
+                    },
                 )
-                
+
         except subprocess.TimeoutExpired:
             logger.error(f"PowerShell command timed out: {command}")
             return ActionResult(
                 success=False,
                 action_type="execute_command",
                 message="PowerShell command timed out",
-                error=f"Command exceeded timeout of {self.timeout} seconds"
+                error=f"Command exceeded timeout of {self.timeout} seconds",
             )
         except Exception as e:
             logger.error(f"Error executing PowerShell command: {e}")
@@ -164,12 +211,14 @@ class PowerShellActions:
                 success=False,
                 action_type="execute_command",
                 message="Failed to execute PowerShell command",
-                error=str(e)
+                error=str(e),
             )
 
     def execute_script(self, script_content: str) -> ActionResult:
         """
         Execute a PowerShell script.
+
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
 
         Args:
             script_content: PowerShell script content to execute
@@ -178,52 +227,68 @@ class PowerShellActions:
             ActionResult with script output or error
         """
         logger.info(f"Executing PowerShell script ({len(script_content)} characters)")
-        
+
         if self.dry_run:
             return ActionResult(
                 success=True,
                 action_type="execute_script",
-                message=f"[DRY-RUN] Would execute PowerShell script",
+                message="[DRY-RUN] Would execute PowerShell script",
                 data={
-                    "script_content": script_content[:500] + "..." if len(script_content) > 500 else script_content,
+                    "script_content": (
+                        script_content[:500] + "..."
+                        if len(script_content) > 500
+                        else script_content
+                    ),
                     "script_length": len(script_content),
-                    "dry_run": True
-                }
+                    "dry_run": True,
+                },
             )
 
         try:
-            result = subprocess.run(
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            logger.info(
+                f"PowerShellActions: Calling subprocess.run (execute_script) "
+                f"with creationflags={creation_flags}"
+            )
+
+            # Use subprocess.run() instead of Popen for better Windows compatibility
+            process = subprocess.run(
                 self.powershell_cmd,
                 input=script_content,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout
+                timeout=self.timeout,
+                creationflags=creation_flags,
             )
-            
-            stdout = result.stdout.strip() if result.stdout else ""
-            stderr = result.stderr.strip() if result.stderr else ""
-            
+
+            return_code = process.returncode
+            stdout = process.stdout.strip() if process.stdout else ""
+            stderr = process.stderr.strip() if process.stderr else ""
+
             return ActionResult(
-                success=result.returncode == 0,
+                success=return_code == 0,
                 action_type="execute_script",
-                message=f"PowerShell script executed with return code {result.returncode}",
+                message=f"PowerShell script executed with return code {return_code}",
                 data={
                     "script_length": len(script_content),
-                    "return_code": result.returncode,
+                    "return_code": return_code,
                     "stdout": stdout,
                     "stderr": stderr,
-                    "success": result.returncode == 0
+                    "success": return_code == 0,
                 },
-                error=stderr if result.returncode != 0 else None
+                error=stderr if return_code != 0 else None,
             )
-            
+
         except subprocess.TimeoutExpired:
             logger.error("PowerShell script timed out")
             return ActionResult(
                 success=False,
                 action_type="execute_script",
                 message="PowerShell script timed out",
-                error=f"Script exceeded timeout of {self.timeout} seconds"
+                error=f"Script exceeded timeout of {self.timeout} seconds",
             )
         except Exception as e:
             logger.error(f"Error executing PowerShell script: {e}")
@@ -231,7 +296,7 @@ class PowerShellActions:
                 success=False,
                 action_type="execute_script",
                 message="Failed to execute PowerShell script",
-                error=str(e)
+                error=str(e),
             )
 
     def get_system_info(self) -> ActionResult:
@@ -242,12 +307,12 @@ class PowerShellActions:
             ActionResult with system information or error
         """
         logger.info("Getting system information via PowerShell")
-        
+
         command = """
-        Get-ComputerInfo | Select-Object OsName, OsVersion, OsArchitecture, TotalPhysicalMemory, 
+        Get-ComputerInfo | Select-Object OsName, OsVersion, OsArchitecture, TotalPhysicalMemory,
         CsProcessors, CsSystemType, WindowsRegisteredOwner, WindowsRegisteredOrganization
         """
-        
+
         return self.execute_command(command)
 
     def get_running_processes(self) -> ActionResult:
@@ -258,12 +323,12 @@ class PowerShellActions:
             ActionResult with process list or error
         """
         logger.info("Getting running processes via PowerShell")
-        
+
         command = """
-        Get-Process | Select-Object Name, Id, CPU, WorkingSet, StartTime | 
+        Get-Process | Select-Object Name, Id, CPU, WorkingSet, StartTime |
         Sort-Object CPU -Descending | Select-Object -First 50
         """
-        
+
         return self.execute_command(command)
 
     def get_services(self, status: str = "running") -> ActionResult:
@@ -277,12 +342,12 @@ class PowerShellActions:
             ActionResult with service list or error
         """
         logger.info(f"Getting {status} services via PowerShell")
-        
+
         command = f"""
-        Get-Service | Where-Object {{$_.Status -eq '{status}'}} | 
+        Get-Service | Where-Object {{$_.Status -eq '{status}'}} |
         Select-Object Name, DisplayName, Status, StartType | Sort-Object Name
         """
-        
+
         return self.execute_command(command)
 
     def get_installed_programs(self) -> ActionResult:
@@ -293,11 +358,11 @@ class PowerShellActions:
             ActionResult with program list or error
         """
         logger.info("Getting installed programs via PowerShell")
-        
+
         command = """
         Get-WmiObject -Class Win32_Product | Select-Object Name, Version, Vendor | Sort-Object Name
         """
-        
+
         return self.execute_command(command)
 
     def check_file_hash(self, file_path: str, algorithm: str = "SHA256") -> ActionResult:
@@ -312,9 +377,9 @@ class PowerShellActions:
             ActionResult with file hash or error
         """
         logger.info(f"Calculating {algorithm} hash for {file_path}")
-        
+
         command = f"""
         Get-FileHash -Path "{file_path}" -Algorithm {algorithm} | Select-Object Hash, Algorithm
         """
-        
+
         return self.execute_command(command)

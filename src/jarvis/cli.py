@@ -8,10 +8,12 @@ and routing them through the orchestrator.
 import argparse
 import logging
 import sys
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from jarvis.chat import ChatSession
 from jarvis.container import Container
+from jarvis.intent_classifier import IntentClassifier
+from jarvis.response_generator import ResponseGenerator
 
 if TYPE_CHECKING:
     from jarvis.voice import VoiceInterface
@@ -131,8 +133,10 @@ def main(argv: Optional[list] = None) -> int:
                 import customtkinter  # noqa: F401
             except ImportError:
                 logger.error("CustomTkinter not installed. Install with: pip install customtkinter")
-                print("Error: GUI mode requires CustomTkinter. Install with: pip install customtkinter",
-                      file=sys.stderr)
+                print(
+                    "Error: GUI mode requires CustomTkinter. Install with: pip install customtkinter",
+                    file=sys.stderr,
+                )
                 return 1
 
             logger.info("Launching GUI mode")
@@ -155,12 +159,12 @@ def main(argv: Optional[list] = None) -> int:
                     on_error=lambda err: logger.error(f"Voice error: {err}"),
                 )
                 # Voice callback will be set in GUI
-                voice_callback = lambda: (
-                    voice_interface.start() if voice_interface else None
-                )
+                voice_callback = lambda: (voice_interface.start() if voice_interface else None)
 
             # Create and run GUI
-            dual_execution_orchestrator = container.get_dual_execution_orchestrator(config_path=args.config)
+            dual_execution_orchestrator = container.get_dual_execution_orchestrator(
+                config_path=args.config
+            )
             gui_app = create_gui_app(
                 orchestrator=orchestrator,
                 reasoning_module=reasoning_module,
@@ -171,6 +175,7 @@ def main(argv: Optional[list] = None) -> int:
 
             # If voice is enabled, connect the voice output to the GUI input
             if voice_interface:
+
                 def voice_command_handler(command: str) -> None:
                     """Handle voice command by sending to GUI."""
                     gui_app.input_text.delete(0, "end")
@@ -185,12 +190,21 @@ def main(argv: Optional[list] = None) -> int:
         # Handle chat mode
         if args.chat:
             reasoning_module = container.get_reasoning_module(config_path=args.config)
-            dual_execution_orchestrator = container.get_dual_execution_orchestrator(config_path=args.config)
+            dual_execution_orchestrator = container.get_dual_execution_orchestrator(
+                config_path=args.config
+            )
+
+            # Initialize intent classifier and response generator for conversational responses
+            intent_classifier = IntentClassifier()
+            response_generator = ResponseGenerator()
+
             chat_session = ChatSession(
                 orchestrator=orchestrator,
                 reasoning_module=reasoning_module,
                 config=config,
                 dual_execution_orchestrator=dual_execution_orchestrator,
+                intent_classifier=intent_classifier,
+                response_generator=response_generator,
             )
             return chat_session.run_interactive_loop()
 

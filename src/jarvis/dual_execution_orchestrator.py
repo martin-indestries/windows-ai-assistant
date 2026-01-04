@@ -6,15 +6,16 @@ complex step breakdown, monitoring, and adaptive fixing.
 """
 
 import logging
-from typing import Generator, Optional
+from typing import Generator
 
 from jarvis.adaptive_fixing import AdaptiveFixEngine
 from jarvis.code_step_breakdown import CodeStepBreakdown
 from jarvis.direct_executor import DirectExecutor
-from jarvis.execution_models import CodeStep, ExecutionMode, ExecutionResult
+from jarvis.execution_models import CodeStep, ExecutionMode
 from jarvis.execution_monitor import ExecutionMonitor
 from jarvis.execution_router import ExecutionRouter
 from jarvis.llm_client import LLMClient
+from jarvis.utils import clean_code
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +44,7 @@ class DualExecutionOrchestrator:
         self.adaptive_fix_engine = AdaptiveFixEngine(llm_client)
         logger.info("DualExecutionOrchestrator initialized")
 
-    def process_request(
-        self, user_input: str
-    ) -> Generator[str, None, None]:
+    def process_request(self, user_input: str) -> Generator[str, None, None]:
         """
         Process user request with dual execution modes.
 
@@ -123,7 +122,6 @@ class DualExecutionOrchestrator:
                     yield "   ✓ Code generated\n"
 
                 # Execute step with retries
-                success = False
                 for attempt in range(step.max_retries):
                     try:
                         # Execute and monitor
@@ -140,10 +138,9 @@ class DualExecutionOrchestrator:
 
                         # Check if execution succeeded
                         if not error_detected:
-                            success = True
                             completed_steps += 1
                             step.status = "completed"
-                            yield f"   ✓ Step completed successfully\n\n"
+                            yield "   ✓ Step completed successfully\n\n"
                             break
                         else:
                             # Error detected - trigger adaptive fixing
@@ -151,11 +148,11 @@ class DualExecutionOrchestrator:
                                 yield f"   ❌ Error detected in step {step.step_number}\n"
 
                                 # Parse error
-                                error_type, error_details = self.execution_monitor.parse_error_from_output(
-                                    error_output
+                                error_type, error_details = (
+                                    self.execution_monitor.parse_error_from_output(error_output)
                                 )
                                 yield f"   Error type: {error_type}\n"
-                                yield f"   Diagnosing failure...\n"
+                                yield "   Diagnosing failure...\n"
 
                                 # Diagnose failure
                                 diagnosis = self.adaptive_fix_engine.diagnose_failure(
@@ -176,14 +173,17 @@ class DualExecutionOrchestrator:
                             else:
                                 # Max retries exceeded
                                 step.status = "failed"
-                                yield f"   ❌ Step {step.step_number} failed after {step.max_retries} attempts\n\n"
+                                yield (
+                                    f"   ❌ Step {step.step_number} "
+                                    f"failed after {step.max_retries} attempts\n\n"
+                                )
                                 break
 
                     except Exception as e:
                         logger.error(f"Exception during step execution: {e}")
                         if attempt < step.max_retries - 1:
                             yield f"   ❌ Exception: {str(e)}\n"
-                            yield f"   ▶️ Retrying...\n\n"
+                            yield "   ▶️ Retrying...\n\n"
                         else:
                             yield f"   ❌ Step failed: {str(e)}\n\n"
                             step.status = "failed"
@@ -191,11 +191,11 @@ class DualExecutionOrchestrator:
 
                 # If step failed and it has dependencies, abort
                 if step.status == "failed":
-                    yield f"   ⚠️  Aborting execution due to failed step\n"
+                    yield "   ⚠️  Aborting execution due to failed step\n"
                     break
 
             # Final summary
-            yield f"\n✅ Execution complete\n"
+            yield "\n✅ Execution complete\n"
             yield f"   Completed: {completed_steps}/{len(steps)} steps\n"
 
         except Exception as e:
@@ -229,9 +229,11 @@ Requirements:
 Return only the code, no markdown formatting, no explanations."""
 
         try:
-            code = self.llm_client.generate(prompt)
+            raw_code = self.llm_client.generate(prompt)
+            # Clean markdown formatting from generated code
+            code = clean_code(raw_code)
             logger.debug(f"Generated code for step {step.step_number}: {len(code)} characters")
-            return code
+            return code  # type: ignore[no-any-return]
         except Exception as e:
             logger.error(f"Failed to generate code for step {step.step_number}: {e}")
             raise

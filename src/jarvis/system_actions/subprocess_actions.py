@@ -46,6 +46,8 @@ class SubprocessActions:
         """
         Execute a system command.
 
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
+
         Args:
             command: Command to execute (string or list)
             shell: Whether to use shell execution
@@ -56,6 +58,8 @@ class SubprocessActions:
         Returns:
             ActionResult with command output or error
         """
+        import time
+
         cmd_str = command if isinstance(command, str) else " ".join(command)
         logger.info(f"Executing command: {cmd_str[:100]}...")
 
@@ -76,8 +80,19 @@ class SubprocessActions:
             )
 
         try:
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+
             if capture_output:
-                result = subprocess.run(
+                logger.info(
+                    f"SubprocessActions: Calling subprocess.run (capture_output=True) "
+                    f"with creationflags={creation_flags}"
+                )
+                start_time = time.time()
+
+                # Use subprocess.run() instead of Popen for better Windows compatibility
+                process = subprocess.run(
                     command,
                     shell=shell,
                     capture_output=True,
@@ -85,34 +100,44 @@ class SubprocessActions:
                     timeout=self.timeout,
                     cwd=working_directory,
                     env=env,
+                    creationflags=creation_flags,
                 )
 
-                stdout = result.stdout.strip() if result.stdout else ""
-                stderr = result.stderr.strip() if result.stderr else ""
+                return_code = process.returncode
+                stdout = process.stdout.strip() if process.stdout else ""
+                stderr = process.stderr.strip() if process.stderr else ""
 
                 return ActionResult(
-                    success=result.returncode == 0,
+                    success=return_code == 0,
                     action_type="execute_command",
-                    message=f"Command executed with return code {result.returncode}",
+                    message=f"Command executed with return code {return_code}",
                     data={
                         "command": command,
                         "shell": shell,
-                        "return_code": result.returncode,
+                        "return_code": return_code,
                         "stdout": stdout,
                         "stderr": stderr,
                         "working_directory": working_directory,
-                        "success": result.returncode == 0,
+                        "success": return_code == 0,
                     },
-                    error=stderr if result.returncode != 0 else None,
-                    execution_time_ms=0.0,
+                    error=stderr if return_code != 0 else None,
+                    execution_time_ms=(time.time() - start_time) * 1000,
                 )
             else:
                 # For non-captured output, run without capture
-                process = subprocess.Popen(
-                    command, shell=shell, stdout=None, stderr=None, cwd=working_directory, env=env
+                logger.info(
+                    f"SubprocessActions: Calling subprocess.run (capture_output=False) "
+                    f"with creationflags={creation_flags}"
                 )
-
-                process.wait(timeout=self.timeout)
+                process = subprocess.run(  # type: ignore[assignment]
+                    command,
+                    shell=shell,
+                    stdin=subprocess.DEVNULL,
+                    timeout=self.timeout,
+                    cwd=working_directory,
+                    env=env,
+                    creationflags=creation_flags,
+                )
 
                 return ActionResult(
                     success=process.returncode == 0,
@@ -203,7 +228,17 @@ class SubprocessActions:
                 if arguments:
                     command += f" {arguments}"
 
-            result = subprocess.run(command, shell=True, timeout=self.timeout)
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            result = subprocess.run(
+                command,
+                shell=True,
+                timeout=self.timeout,
+                creationflags=creation_flags,
+                stdin=subprocess.DEVNULL,
+            )
 
             return ActionResult(
                 success=result.returncode == 0,

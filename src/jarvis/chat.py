@@ -13,8 +13,10 @@ from typing import Any, Dict, Generator, List, Optional
 
 from jarvis.config import JarvisConfig
 from jarvis.controller import Controller
+from jarvis.intent_classifier import IntentClassifier
 from jarvis.orchestrator import Orchestrator
 from jarvis.reasoning import Plan, ReasoningModule
+from jarvis.response_generator import ResponseGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,8 @@ class ChatSession:
         config: Optional[JarvisConfig] = None,
         controller: Optional[Controller] = None,
         dual_execution_orchestrator: Optional[Any] = None,
+        intent_classifier: Optional[IntentClassifier] = None,
+        response_generator: Optional[ResponseGenerator] = None,
     ) -> None:
         """
         Initialize a chat session.
@@ -78,6 +82,8 @@ class ChatSession:
             config: Optional configuration
             controller: Optional controller for dual-model processing
             dual_execution_orchestrator: Optional dual execution orchestrator for code execution
+            intent_classifier: Optional intent classifier for distinguishing casual vs command
+            response_generator: Optional response generator for conversational responses
         """
         self.orchestrator = orchestrator
         self.reasoning_module = reasoning_module
@@ -86,6 +92,10 @@ class ChatSession:
         self.dual_execution_orchestrator = dual_execution_orchestrator
         self.history: List[ChatMessage] = []
         self.is_running = False
+
+        # Initialize intent classifier and response generator if not provided
+        self.intent_classifier = intent_classifier or IntentClassifier()
+        self.response_generator = response_generator or ResponseGenerator()
 
     def add_message(
         self,
@@ -220,6 +230,41 @@ class ChatSession:
 
         return "\n".join(lines) if lines else "No result information available."
 
+    def _generate_conversational_response(
+        self, user_input: str, execution_result: Optional[Dict[str, Any]]
+    ) -> str:
+        """
+        Generate a conversational response based on intent and execution result.
+
+        Args:
+            user_input: Original user input
+            execution_result: Optional execution result dictionary
+
+        Returns:
+            Conversational response string
+        """
+        try:
+            # Classify intent
+            intent = self.intent_classifier.classify_intent(user_input)
+            logger.debug(f"Classified intent as: {intent}")
+
+            # Convert execution result to string
+            result_str = ""
+            if execution_result:
+                try:
+                    result_str = json.dumps(execution_result, indent=2)
+                except (TypeError, ValueError):
+                    result_str = str(execution_result)
+
+            # Generate appropriate response
+            response = self.response_generator.generate_response(intent, result_str, user_input)
+            return response
+
+        except Exception as e:
+            logger.warning(f"Failed to generate conversational response: {e}")
+            # Fallback response
+            return "Is there anything else I can help you with?"
+
     def format_response(
         self,
         user_input: str,
@@ -336,7 +381,20 @@ class ChatSession:
             # First, check if this is a code execution request for dual execution orchestrator
             if self.dual_execution_orchestrator:
                 # Check if user input matches code execution patterns
-                code_keywords = ["write", "code", "program", "script", "run", "execute", "create", "generate", "build", "make", "implement", "develop"]
+                code_keywords = [
+                    "write",
+                    "code",
+                    "program",
+                    "script",
+                    "run",
+                    "execute",
+                    "create",
+                    "generate",
+                    "build",
+                    "make",
+                    "implement",
+                    "develop",
+                ]
                 input_lower = user_input.lower()
                 has_code_keyword = any(keyword in input_lower for keyword in code_keywords)
 
@@ -451,6 +509,16 @@ class ChatSession:
                 full_response,
                 metadata={"plan": plan.model_dump() if plan else None, "result": result},
             )
+
+            # Generate and yield conversational response at the end
+            yield "\n\n💬 Response: "
+            conversational_response = self._generate_conversational_response(user_input, result)
+            yield conversational_response
+            full_response += f"\n\n💬 Response: {conversational_response}"
+
+            # Update the stored message with the full response
+            if self.history:
+                self.history[-1].content = full_response
 
         except Exception as e:
             logger.exception(f"Error processing command: {e}")

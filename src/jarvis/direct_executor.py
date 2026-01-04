@@ -6,12 +6,13 @@ Handles DIRECT mode requests: generate code, write to file, execute immediately.
 
 import logging
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Generator, Optional
 
-from jarvis.execution_models import CodeStep, ExecutionResult
 from jarvis.llm_client import LLMClient
+from jarvis.utils import clean_code
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +54,10 @@ class DirectExecutor:
 
         try:
             code = self.llm_client.generate(prompt)
-            logger.debug(f"Generated code length: {len(code)} characters")
-            return code
+            # Clean markdown formatting from generated code
+            cleaned_code = clean_code(str(code))
+            logger.debug(f"Generated code length: {len(cleaned_code)} characters")
+            return cleaned_code
         except Exception as e:
             logger.error(f"Failed to generate code: {e}")
             raise
@@ -79,6 +82,7 @@ class DirectExecutor:
         if filename is None:
             # Auto-generate filename with timestamp
             import time
+
             timestamp = int(time.time())
             filename = f"jarvis_script_{timestamp}.py"
 
@@ -100,78 +104,57 @@ class DirectExecutor:
             logger.error(f"Failed to write script: {e}")
             raise
 
-    def stream_execution(
-        self, script_path: Path, timeout: int = 30
-    ) -> Generator[str, None, None]:
+    def stream_execution(self, script_path: Path, timeout: int = 30) -> Generator[str, None, None]:
         """
-        Execute script and stream output in real-time.
+        Execute script and stream output.
+
+        Uses subprocess.run() for Windows compatibility, avoiding WinError 10038.
 
         Args:
             script_path: Path to the script to execute
             timeout: Execution timeout in seconds
 
         Yields:
-            Output lines as they arrive
+            Output lines as they arrive (after completion)
         """
         logger.info(f"Streaming execution of {script_path}")
 
         try:
-            # Use subprocess with unbuffered output
-            process = subprocess.Popen(
-                ["python", str(script_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+            # Windows-specific subprocess creation
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            # Use subprocess.run() instead of Popen for better Windows compatibility
+            process = subprocess.run(
+                [sys.executable, str(script_path)],
+                capture_output=True,
                 text=True,
-                bufsize=1,  # Line buffered
-                universal_newlines=True,
+                timeout=timeout,
+                creationflags=creation_flags,
             )
 
-            # Stream output in real-time
-            import select
+            # Yield stdout line by line
+            if process.stdout:
+                for line in process.stdout.splitlines(keepends=True):
+                    logger.debug(f"STDOUT: {line.rstrip()}")
+                    yield line
 
-            stdout_lines = []
-            stderr_lines = []
+            # Yield stderr line by line
+            if process.stderr:
+                for line in process.stderr.splitlines(keepends=True):
+                    logger.debug(f"STDERR: {line.rstrip()}")
+                    yield line
 
-            while True:
-                # Check if process has finished
-                if process.poll() is not None:
-                    # Read any remaining output
-                    if process.stdout:
-                        for line in process.stdout:
-                            stdout_lines.append(line)
-                            yield line
-                    if process.stderr:
-                        for line in process.stderr:
-                            stderr_lines.append(line)
-                            yield line
-                    break
-
-                # Check for available output
-                readable, _, _ = select.select(
-                    [process.stdout, process.stderr], [], [], 0.1
-                )
-
-                for stream in readable:
-                    line = stream.readline()
-                    if line:
-                        if stream == process.stdout:
-                            stdout_lines.append(line)
-                            logger.debug(f"STDOUT: {line.rstrip()}")
-                        else:
-                            stderr_lines.append(line)
-                            logger.debug(f"STDERR: {line.rstrip()}")
-                        yield line
-
+            # Check exit code
             exit_code = process.returncode
             logger.info(f"Process exited with code {exit_code}")
 
             if exit_code != 0:
-                stderr_output = "".join(stderr_lines)
-                logger.warning(f"Script failed with exit code {exit_code}: {stderr_output}")
+                logger.warning(f"Script failed with exit code {exit_code}")
 
         except subprocess.TimeoutExpired:
-            logger.error(f"Script execution timed out after {timeout} seconds")
-            process.kill()
+            logger.warning(f"Script execution timeout after {timeout}s")
             yield f"\n❌ Error: Execution timed out after {timeout} seconds"
         except Exception as e:
             logger.error(f"Failed to stream execution: {e}")
@@ -217,9 +200,7 @@ class DirectExecutor:
             logger.error(f"Failed to execute request: {e}")
             yield f"\n❌ Error: {str(e)}\n"
 
-    def _build_code_generation_prompt(
-        self, user_request: str, language: str
-    ) -> str:
+    def _build_code_generation_prompt(self, user_request: str, language: str) -> str:
         """
         Build prompt for code generation.
 

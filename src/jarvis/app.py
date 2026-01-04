@@ -14,8 +14,10 @@ import customtkinter
 
 from jarvis.chat import ChatMessage, ChatSession
 from jarvis.config import JarvisConfig
+from jarvis.intent_classifier import IntentClassifier
 from jarvis.orchestrator import Orchestrator
 from jarvis.reasoning import Plan, ReasoningModule
+from jarvis.response_generator import ResponseGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -49,12 +51,18 @@ class GUIApp(customtkinter.CTk):
         self.voice_callback = voice_callback
         self.dual_execution_orchestrator = dual_execution_orchestrator
 
+        # Initialize intent classifier and response generator
+        self.intent_classifier = IntentClassifier()
+        self.response_generator = ResponseGenerator()
+
         # Create chat session
         self.chat_session = ChatSession(
             orchestrator=orchestrator,
             reasoning_module=reasoning_module,
             config=config,
             dual_execution_orchestrator=dual_execution_orchestrator,
+            intent_classifier=self.intent_classifier,
+            response_generator=self.response_generator,
         )
 
         # GUI state

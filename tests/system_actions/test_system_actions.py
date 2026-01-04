@@ -7,7 +7,7 @@ registry, OCR, PowerShell, and subprocess actions.
 
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -331,27 +331,37 @@ class TestPowerShellActions:
     def test_execute_command_dry_run(self, mock_subprocess):
         """Test executing command in dry run mode."""
         actions = PowerShellActions(dry_run=True)
+        # Reset mock because __init__ calls subprocess.run to detect powershell
+        mock_subprocess.run.reset_mock()
+
         result = actions.execute_command("Get-Process")
 
         assert result.success is True
         assert "DRY-RUN" in result.message
         mock_subprocess.run.assert_not_called()
+        mock_subprocess.Popen.assert_not_called()
 
     @patch("jarvis.system_actions.powershell.subprocess")
     def test_execute_command_success(self, mock_subprocess):
         """Test successful command execution."""
-        mock_result = Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "output"
-        mock_result.stderr = ""
-        mock_subprocess.run.return_value = mock_result
+        import subprocess
+
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        mock_subprocess.CREATE_NEW_PROCESS_GROUP = 0
+
+        mock_process = MagicMock()
+        mock_process.returncode = 0
+        mock_process.stdout.readline.side_effect = ["output", ""]
+        mock_process.stderr.readline.side_effect = [""]
+        mock_process.poll.return_value = 0
+        mock_subprocess.Popen.return_value = mock_process
 
         actions = PowerShellActions(dry_run=False)
         result = actions.execute_command("Get-Process")
 
         assert result.success is True
-        assert result.data["stdout"] == "output"
-        mock_subprocess.run.assert_called_once()
+        assert "output" in result.data["stdout"]
+        mock_subprocess.Popen.assert_called()
 
     def test_get_system_info(self):
         """Test getting system information."""
@@ -385,31 +395,45 @@ class TestSubprocessActions:
     @patch("jarvis.system_actions.subprocess_actions.subprocess")
     def test_execute_command_success(self, mock_subprocess):
         """Test successful command execution."""
-        mock_result = Mock()
-        mock_result.returncode = 0
-        mock_result.stdout = "hello\n"
-        mock_result.stderr = ""
-        mock_subprocess.run.return_value = mock_result
+        import subprocess
+
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        mock_subprocess.CREATE_NEW_PROCESS_GROUP = 0
+
+        mock_process = MagicMock()
+        mock_process.returncode = 0
+        mock_process.stdout.readline.side_effect = ["hello", ""]
+        mock_process.stderr.readline.side_effect = [""]
+        mock_process.poll.return_value = 0
+        mock_subprocess.Popen.return_value = mock_process
 
         actions = SubprocessActions(dry_run=False)
         result = actions.execute_command("echo hello")
 
         assert result.success is True
-        assert result.data["stdout"] == "hello"
-        mock_subprocess.run.assert_called_once()
+        assert "hello" in result.data["stdout"]
+        mock_subprocess.Popen.assert_called()
 
     @patch("jarvis.system_actions.subprocess_actions.subprocess")
     def test_ping_host(self, mock_subprocess):
         """Test pinging a host."""
-        mock_result = Mock()
-        mock_result.returncode = 0
-        mock_subprocess.run.return_value = mock_result
+        import subprocess
+
+        mock_subprocess.TimeoutExpired = subprocess.TimeoutExpired
+        mock_subprocess.CREATE_NEW_PROCESS_GROUP = 0
+
+        mock_process = MagicMock()
+        mock_process.returncode = 0
+        mock_process.stdout.readline.side_effect = ["ping output", ""]
+        mock_process.stderr.readline.side_effect = [""]
+        mock_process.poll.return_value = 0
+        mock_subprocess.Popen.return_value = mock_process
 
         actions = SubprocessActions(dry_run=False)
         result = actions.ping_host("google.com", count=3)
 
         assert result.success is True
-        mock_subprocess.run.assert_called_once()
+        mock_subprocess.Popen.assert_called()
 
     @patch("jarvis.system_actions.subprocess_actions.sys.platform", "win32")
     @patch("jarvis.system_actions.subprocess_actions.os")

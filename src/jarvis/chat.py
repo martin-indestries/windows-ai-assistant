@@ -2,7 +2,7 @@
 Interactive chat interface module.
 
 Implements a ChatGPT-like chat mode for continuous conversation with Jarvis,
-maintaining context across multiple user inputs.
+maintaining context across multiple user inputs with persistent memory.
 """
 
 import json
@@ -14,7 +14,10 @@ from typing import Any, Dict, Generator, List, Optional
 from jarvis.config import JarvisConfig
 from jarvis.controller import Controller
 from jarvis.intent_classifier import IntentClassifier
+from jarvis.memory_models import ExecutionMemory
+from jarvis.memory_reference_resolver import ReferenceResolver
 from jarvis.orchestrator import Orchestrator
+from jarvis.persistent_memory import MemoryModule
 from jarvis.reasoning import Plan, ReasoningModule
 from jarvis.response_generator import ResponseGenerator
 from jarvis.retry_parsing import parse_retry_limit
@@ -73,6 +76,7 @@ class ChatSession:
         dual_execution_orchestrator: Optional[Any] = None,
         intent_classifier: Optional[IntentClassifier] = None,
         response_generator: Optional[ResponseGenerator] = None,
+        memory_module: Optional[MemoryModule] = None,
     ) -> None:
         """
         Initialize a chat session.
@@ -97,6 +101,122 @@ class ChatSession:
         # Initialize intent classifier and response generator if not provided
         self.intent_classifier = intent_classifier or IntentClassifier()
         self.response_generator = response_generator or ResponseGenerator()
+
+        # Initialize persistent memory and reference resolver
+        self.memory_module = memory_module or MemoryModule()
+        self.reference_resolver = ReferenceResolver()
+
+        # Bootstrap memory module
+        try:
+            self.memory_module.bootstrap()
+        except Exception as e:
+            logger.warning(f"Failed to bootstrap memory module: {e}")
+
+        # Load recent history into cache
+        self._load_recent_history()
+
+        logger.info("ChatSession initialized with memory support")
+
+    def _load_recent_history(self) -> None:
+        """Load recent conversation and execution history from persistent storage."""
+        try:
+            # Load recent conversations
+            recent_conversations = self.memory_module.get_conversation_history(limit=50)
+            logger.info(f"Loaded {len(recent_conversations)} recent conversations from memory")
+
+            # Load recent executions
+            recent_executions = self.memory_module.search_by_description("", limit=100)  # Get all recent
+            logger.info(f"Loaded {len(recent_executions)} recent executions from memory")
+
+        except Exception as e:
+            logger.warning(f"Failed to load recent history: {e}")
+
+    def _extract_execution_info(self, result: Dict[str, Any]) -> List[ExecutionMemory]:
+        """Extract execution information from orchestrator results."""
+        executions = []
+
+        try:
+            # Check for files created/modified
+            files_created = []
+            files_modified = []
+
+            if isinstance(result, dict):
+                # Look for file information in various possible locations
+                if "files_created" in result:
+                    files_created = result["files_created"]
+                elif "result" in result and isinstance(result["result"], dict):
+                    inner_result = result["result"]
+                    files_created = inner_result.get("files_created", [])
+                    files_modified = inner_result.get("files_modified", [])
+
+                # Try to get code from plan or result
+                code_generated = ""
+                if "plan" in result and result["plan"]:
+                    plan = result["plan"]
+                    if hasattr(plan, "steps"):
+                        code_parts = []
+                        for step in plan.steps:
+                            if hasattr(step, "code") and step.code:
+                                code_parts.append(step.code)
+                        code_generated = "\n".join(code_parts)
+
+                # Create execution record if we have meaningful data
+                if files_created or files_modified or code_generated:
+                    execution = ExecutionMemory(
+                        user_message="",  # Will be filled in by caller
+                        description=f"Generated files: {len(files_created)}, Modified: {len(files_modified)}",
+                        code_generated=code_generated,
+                        file_locations=files_created + files_modified,
+                        output=result.get("output", ""),
+                        success=result.get("success", True),
+                        tags=["file_creation", "execution"],
+                    )
+                    executions.append(execution)
+
+        except Exception as e:
+            logger.warning(f"Failed to extract execution info: {e}")
+
+        return executions
+
+    def _check_and_resolve_references(self, user_input: str) -> str:
+        """
+        Check if user is referencing past work and resolve it.
+
+        Args:
+            user_input: User's input message
+
+        Returns:
+            Potentially modified user input with resolved references
+        """
+        try:
+            # Get recent executions for reference resolution
+            recent_executions = self.memory_module.search_by_description("", limit=20)
+
+            # Try to resolve any references
+            reference_match = self.reference_resolver.resolve_reference(user_input, recent_executions)
+
+            if reference_match.matched and reference_match.execution:
+                execution = reference_match.execution
+                logger.info(f"Resolved reference to execution: {execution.execution_id[:8]}...")
+
+                # Annotate the user input with reference information
+                annotated_input = self.reference_resolver.annotate_with_reference(
+                    user_input, execution
+                )
+                return annotated_input
+
+        except Exception as e:
+            logger.warning(f"Failed to resolve references: {e}")
+
+        return user_input
+
+    def _build_context_from_memory(self) -> str:
+        """Build context string from recent memory."""
+        try:
+            return self.memory_module.get_recent_context(num_turns=5)
+        except Exception as e:
+            logger.warning(f"Failed to build context from memory: {e}")
+            return ""
 
     def add_message(
         self,

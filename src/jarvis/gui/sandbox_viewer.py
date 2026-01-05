@@ -10,17 +10,14 @@ Integrates:
 """
 
 import logging
-import threading
-import time
-from typing import Callable, Dict, Optional
 
 import customtkinter as ctk
 
-from jarvis.gui.live_code_editor import LiveCodeEditor
-from jarvis.gui.execution_console import ExecutionConsole
-from jarvis.gui.test_results_viewer import TestResultsViewer
-from jarvis.gui.status_panel import StatusPanel
 from jarvis.gui.deployment_panel import DeploymentPanel
+from jarvis.gui.execution_console import ExecutionConsole
+from jarvis.gui.live_code_editor import LiveCodeEditor
+from jarvis.gui.status_panel import StatusPanel
+from jarvis.gui.test_results_viewer import TestResultsViewer
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +53,7 @@ class SandboxViewer(ctk.CTkFrame):
 
         # State tracking
         self.is_visible = True
-        self.test_id_map = {}  # Map GUI test IDs to viewer IDs
+        self.test_id_map: dict[str, int] = {}  # Map GUI test IDs to viewer IDs
 
         # Timer for elapsed time
         self.timer_running = False
@@ -78,7 +75,7 @@ class SandboxViewer(ctk.CTkFrame):
             text="▼ Hide Sandbox Viewer",
             command=self._toggle_visibility,
             height=30,
-            font=("Arial", 11, "bold")
+            font=("Arial", 11, "bold"),
         )
         self.toggle_button.pack(fill="x", padx=5)
 
@@ -96,19 +93,11 @@ class SandboxViewer(ctk.CTkFrame):
         top_row.pack(fill="both", expand=True, padx=5, pady=2)
 
         # Code editor - takes 70% width
-        self.code_editor = LiveCodeEditor(
-            top_row,
-            width=500,
-            height=200
-        )
+        self.code_editor = LiveCodeEditor(top_row, width=500, height=200)
         self.code_editor.pack(side="left", fill="both", expand=True, padx=(0, 2))
 
         # Status panel - takes 30% width
-        self.status_panel = StatusPanel(
-            top_row,
-            width=200,
-            height=200
-        )
+        self.status_panel = StatusPanel(top_row, width=200, height=200)
         self.status_panel.pack(side="right", fill="both", expand=True, padx=(2, 0))
 
         # Middle row: Execution console (left) + Test results (right)
@@ -116,29 +105,18 @@ class SandboxViewer(ctk.CTkFrame):
         middle_row.pack(fill="both", expand=True, padx=5, pady=2)
 
         # Execution console - takes 50% width
-        self.execution_console = ExecutionConsole(
-            middle_row,
-            width=350,
-            height=200
-        )
+        self.execution_console = ExecutionConsole(middle_row, width=350, height=200)
         self.execution_console.pack(side="left", fill="both", expand=True, padx=(0, 2))
 
         # Test results - takes 50% width
-        self.test_results = TestResultsViewer(
-            middle_row,
-            width=350,
-            height=200
-        )
+        self.test_results = TestResultsViewer(middle_row, width=350, height=200)
         self.test_results.pack(side="right", fill="both", expand=True, padx=(2, 0))
 
         # Bottom row: Deployment panel
         bottom_row = ctk.CTkFrame(self.content_frame, fg_color="transparent")
         bottom_row.pack(fill="x", padx=5, pady=2)
 
-        self.deployment_panel = DeploymentPanel(
-            bottom_row,
-            height=150
-        )
+        self.deployment_panel = DeploymentPanel(bottom_row, height=150)
         self.deployment_panel.pack(fill="x", padx=5, pady=2)
 
     def _toggle_visibility(self) -> None:
@@ -169,38 +147,30 @@ class SandboxViewer(ctk.CTkFrame):
             "code_chunk_generated": self._on_code_chunk_generated,
             "code_generated": self._on_code_generated,
             "code_generation_complete": self._on_code_generation_complete,
-
             # Sandbox events
             "sandbox_created": self._on_sandbox_created,
             "sandbox_cleaned": self._on_sandbox_cleaned,
-
             # Analysis events
             "program_analyzed": self._on_program_analyzed,
-
             # Prompt events
             "prompts_injected": self._on_prompts_injected,
-
             # Test events
             "test_cases_generated": self._on_test_cases_generated,
             "test_started": self._on_test_started,
             "test_completed": self._on_test_completed,
             "test_result": self._on_test_result,
             "test_summary": self._on_test_summary,
-
             # Execution events
             "execution_line": self._on_execution_line,
             "prompt_detected": self._on_prompt_detected,
             "input_sent": self._on_input_sent,
             "test_output": self._on_test_output,
-
             # Deployment events
             "deployment_started": self._on_deployment_started,
             "deployment_complete": self._on_deployment_complete,
-
             # Step events
             "step_progress": self._on_step_progress,
             "retry_attempt": self._on_retry_attempt,
-
             # Error events
             "error_occurred": self._on_error_occurred,
         }
@@ -281,7 +251,7 @@ class SandboxViewer(ctk.CTkFrame):
             test_id = self.test_results.add_test(
                 name=test.get("name", "Unnamed test"),
                 inputs=test.get("inputs", []),
-                expected=test.get("expected", "")
+                expected=test.get("expected", ""),
             )
             self.test_id_map[test.get("name", "unknown")] = test_id
 
@@ -336,12 +306,10 @@ class SandboxViewer(ctk.CTkFrame):
         summary = data.get("summary", {})
         total = summary.get("total_tests", 0)
         passed = summary.get("passed", 0)
-        failed = summary.get("failed", 0)
+        _ = summary.get("failed", 0)  # noqa: F841
         rate = summary.get("success_rate", 0)
 
-        self.execution_console.log_info(
-            f"Tests: {passed}/{total} passed ({rate:.0f}%)"
-        )
+        self.execution_console.log_info(f"Tests: {passed}/{total} passed ({rate:.0f}%)")
 
     def _on_execution_line(self, data: dict) -> None:
         """Handle execution line output."""
@@ -389,9 +357,7 @@ class SandboxViewer(ctk.CTkFrame):
         test_results.update(viewer_summary)
 
         self.deployment_panel.show_success(
-            file_path=file_path,
-            file_size=file_size,
-            test_results=test_results
+            file_path=file_path, file_size=file_size, test_results=test_results
         )
 
         self.execution_console.log_info(f"Deployed: {file_path}")
@@ -400,7 +366,7 @@ class SandboxViewer(ctk.CTkFrame):
     def _on_step_progress(self, data: dict) -> None:
         """Handle step progress update."""
         step = data.get("step", 0)
-        total = data.get("total", 7)
+        _ = data.get("total", 7)  # noqa: F841
         description = data.get("description", "")
 
         self.status_panel.set_step(step, description)
@@ -409,7 +375,7 @@ class SandboxViewer(ctk.CTkFrame):
         """Handle retry attempt."""
         attempt = data.get("attempt", 1)
         max_attempts = data.get("max_attempts", 10)
-        error = data.get("error", "")
+        _ = data.get("error", "")  # noqa: F841
 
         self.status_panel.set_attempt(attempt, max_attempts)
         self.execution_console.log_info(f"Retry attempt {attempt}/{max_attempts}")
@@ -443,6 +409,4 @@ class SandboxViewer(ctk.CTkFrame):
         Args:
             **kwargs: Configuration options
         """
-        if "fg_color" in kwargs:
-            self.configure(fg_color=kwargs["fg_color"])
         super().configure(**kwargs)

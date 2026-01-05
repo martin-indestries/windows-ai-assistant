@@ -65,6 +65,7 @@ class ConversationBackend:
                     user_request TEXT NOT NULL,
                     description TEXT NOT NULL,
                     code TEXT NOT NULL,
+                    code_generated TEXT NOT NULL,
                     file_locations TEXT NOT NULL,
                     output TEXT NOT NULL,
                     success INTEGER NOT NULL,
@@ -115,10 +116,36 @@ class ConversationBackend:
 
             conn.commit()
             logger.debug("Conversation database schema initialized")
+            
+            # Add code_generated column if it doesn't exist (for backward compatibility)
+            self._add_code_generated_column_if_needed(conn)
         except Exception as e:
             logger.error(f"Failed to initialize conversation database: {e}")
             raise
 
+    def _add_code_generated_column_if_needed(self, conn: sqlite3.Connection) -> None:
+        """Add code_generated column to executions table if it doesn't exist."""
+        try:
+            cursor = conn.cursor()
+            # Check if code_generated column exists
+            cursor.execute("PRAGMA table_info(executions)")
+            columns = [column[1] for column in cursor.fetchall()]
+            
+            if "code_generated" not in columns:
+                # Add the column with default value from code column
+                cursor.execute(
+                    "ALTER TABLE executions ADD COLUMN code_generated TEXT NOT NULL DEFAULT ''"
+                )
+                # Copy data from code to code_generated for existing records
+                cursor.execute(
+                    "UPDATE executions SET code_generated = code WHERE code_generated = ''"
+                )
+                conn.commit()
+                logger.info("Added code_generated column to executions table and migrated data")
+        except Exception as e:
+            logger.error(f"Failed to add code_generated column: {e}")
+            # Don't raise - this is not critical for operation
+            
     def _get_connection(self) -> sqlite3.Connection:
         """Get or create database connection."""
         if self.connection is None:
@@ -188,9 +215,9 @@ class ConversationBackend:
                 """
                 INSERT INTO executions (
                     id, conversation_id, timestamp, user_request, description,
-                    code, file_locations, output, success, tags,
+                    code, code_generated, file_locations, output, success, tags,
                     execution_time_ms, error_message, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     execution.execution_id,
@@ -198,7 +225,8 @@ class ConversationBackend:
                     execution.timestamp.isoformat(),
                     execution.user_request,
                     execution.description,
-                    execution.code_generated,
+                    execution.code_generated,  # Keep old code field for backward compatibility
+                    execution.code_generated,  # New code_generated field
                     json.dumps(execution.file_locations),
                     execution.output,
                     1 if execution.success else 0,
@@ -444,11 +472,19 @@ class ConversationBackend:
     ) -> ConversationMemory:
         """Convert database row to ConversationMemory."""
         embedding = None
-        if row["embedding"]:
-            try:
-                embedding = json.loads(row["embedding"].decode("utf-8"))
-            except:
-                pass
+        try:
+            if row["embedding"]:
+                try:
+                    embedding = json.loads(row["embedding"].decode("utf-8"))
+                except:
+                    pass
+        except KeyError:
+            pass
+
+        try:
+            session_id = row["session_id"]
+        except KeyError:
+            session_id = None
 
         return ConversationMemory(
             turn_id=row["id"],
@@ -458,21 +494,39 @@ class ConversationBackend:
             execution_history=executions,
             context_tags=json.loads(row["context_tags"]),
             embedding=embedding,
-            session_id=row["session_id"],
+            session_id=session_id,
         )
 
     def _row_to_execution(self, row: sqlite3.Row) -> ExecutionMemory:
         """Convert database row to ExecutionMemory."""
+        # Handle code_generated field with backward compatibility
+        try:
+            code_generated = row["code_generated"]
+        except KeyError:
+            # Fallback to 'code' field for old database records
+            code_generated = row["code"]
+        
+        # Handle optional fields safely
+        try:
+            execution_time_ms = row["execution_time_ms"]
+        except KeyError:
+            execution_time_ms = None
+            
+        try:
+            error_message = row["error_message"]
+        except KeyError:
+            error_message = None
+
         return ExecutionMemory(
             execution_id=row["id"],
             timestamp=datetime.fromisoformat(row["timestamp"]),
             user_request=row["user_request"],
             description=row["description"],
-            code=row["code"],
+            code_generated=code_generated,
             file_locations=json.loads(row["file_locations"]),
             output=row["output"],
             success=bool(row["success"]),
             tags=json.loads(row["tags"]),
-            execution_time_ms=row["execution_time_ms"],
-            error_message=row["error_message"],
+            execution_time_ms=execution_time_ms,
+            error_message=error_message,
         )

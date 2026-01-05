@@ -38,19 +38,12 @@ class DeploymentPanel(ctk.CTkFrame):
         self.current_file_path = None
 
         # Title
-        self.title_label = ctk.CTkLabel(
-            self,
-            text="💾 DEPLOYMENT",
-            font=("Arial", 12, "bold")
-        )
+        self.title_label = ctk.CTkLabel(self, text="💾 DEPLOYMENT", font=("Arial", 12, "bold"))
         self.title_label.pack(pady=(5, 0), padx=10, anchor="w")
 
         # Status label
         self.status_label = ctk.CTkLabel(
-            self,
-            text="Waiting for deployment...",
-            font=("Arial", 10),
-            text_color="gray"
+            self, text="Waiting for deployment...", font=("Arial", 10), text_color="gray"
         )
         self.status_label.pack(pady=(0, 5), padx=10, anchor="w")
 
@@ -59,37 +52,24 @@ class DeploymentPanel(ctk.CTkFrame):
         self.file_info_frame.pack(fill="x", padx=5, pady=2)
 
         # File path
-        self.path_label = ctk.CTkLabel(
-            self.file_info_frame,
-            text="File: -",
-            font=("Arial", 10)
-        )
+        self.path_label = ctk.CTkLabel(self.file_info_frame, text="File: -", font=("Arial", 10))
         self.path_label.pack(anchor="w", padx=5)
 
         # File size
         self.size_label = ctk.CTkLabel(
-            self.file_info_frame,
-            text="Size: -",
-            font=("Arial", 10),
-            text_color="gray"
+            self.file_info_frame, text="Size: -", font=("Arial", 10), text_color="gray"
         )
         self.size_label.pack(anchor="w", padx=5)
 
         # Timestamp
         self.time_label = ctk.CTkLabel(
-            self.file_info_frame,
-            text="Created: -",
-            font=("Arial", 10),
-            text_color="gray"
+            self.file_info_frame, text="Created: -", font=("Arial", 10), text_color="gray"
         )
         self.time_label.pack(anchor="w", padx=5)
 
         # Test results summary
         self.tests_label = ctk.CTkLabel(
-            self.file_info_frame,
-            text="Tests: -",
-            font=("Arial", 10),
-            text_color="gray"
+            self.file_info_frame, text="Tests: -", font=("Arial", 10), text_color="gray"
         )
         self.tests_label.pack(anchor="w", padx=5, pady=(5, 0))
 
@@ -103,7 +83,7 @@ class DeploymentPanel(ctk.CTkFrame):
             text="📂 Open Folder",
             command=self._open_folder,
             width=120,
-            state="disabled"
+            state="disabled",
         )
         self.folder_button.pack(side="left", padx=5)
 
@@ -113,7 +93,7 @@ class DeploymentPanel(ctk.CTkFrame):
             text="📄 Open File",
             command=self._open_file,
             width=120,
-            state="disabled"
+            state="disabled",
         )
         self.file_button.pack(side="left", padx=5)
 
@@ -123,18 +103,14 @@ class DeploymentPanel(ctk.CTkFrame):
             text="✂️ Copy Path",
             command=self._copy_path,
             width=120,
-            state="disabled"
+            state="disabled",
         )
         self.copy_button.pack(side="left", padx=5)
 
         logger.info("DeploymentPanel initialized")
 
     def show_success(
-        self,
-        file_path: str,
-        file_size: int,
-        test_results: Dict,
-        timestamp: Optional[str] = None
+        self, file_path: str, file_size: int, test_results: Dict, timestamp: Optional[str] = None
     ) -> None:
         """
         Show successful deployment.
@@ -151,8 +127,7 @@ class DeploymentPanel(ctk.CTkFrame):
         total = test_results.get("total", 0)
         passed = test_results.get("passed", 0)
         self.status_label.configure(
-            text=f"✅ All tests passed ({passed}/{total})",
-            text_color="#50FA7B"
+            text=f"✅ All tests passed ({passed}/{total})", text_color="#50FA7B"
         )
 
         # Update file info
@@ -172,6 +147,7 @@ class DeploymentPanel(ctk.CTkFrame):
             self.time_label.configure(text=f"Created: {timestamp}")
         else:
             from datetime import datetime
+
             self.time_label.configure(
                 text=f"Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             )
@@ -188,10 +164,7 @@ class DeploymentPanel(ctk.CTkFrame):
 
     def show_pending(self) -> None:
         """Show pending deployment state."""
-        self.status_label.configure(
-            text="Waiting for deployment...",
-            text_color="gray"
-        )
+        self.status_label.configure(text="Waiting for deployment...", text_color="gray")
         self.path_label.configure(text="File: -")
         self.size_label.configure(text="Size: -")
         self.time_label.configure(text="Created: -")
@@ -212,15 +185,18 @@ class DeploymentPanel(ctk.CTkFrame):
         folder_path = str(file_path.parent)
 
         import platform
+
         system = platform.system()
 
         if system == "Windows":
-            os.startfile(folder_path)
+            os.startfile(folder_path)  # type: ignore[attr-defined]
         elif system == "Darwin":  # macOS
             import subprocess
+
             subprocess.run(["open", folder_path])
         else:  # Linux
             import subprocess
+
             subprocess.run(["xdg-open", folder_path])
 
     def _open_file(self) -> None:
@@ -229,15 +205,18 @@ class DeploymentPanel(ctk.CTkFrame):
             return
 
         import platform
+
         system = platform.system()
 
         if system == "Windows":
-            os.startfile(self.current_file_path)
+            os.startfile(self.current_file_path)  # type: ignore[attr-defined]
         elif system == "Darwin":  # macOS
             import subprocess
+
             subprocess.run(["open", self.current_file_path])
         else:  # Linux
             import subprocess
+
             subprocess.run(["xdg-open", self.current_file_path])
 
     def _copy_path(self) -> None:
@@ -261,6 +240,4 @@ class DeploymentPanel(ctk.CTkFrame):
         Args:
             **kwargs: Configuration options
         """
-        if "fg_color" in kwargs:
-            self.configure(fg_color=kwargs["fg_color"])
         super().configure(**kwargs)

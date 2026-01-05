@@ -3,7 +3,7 @@ Test results viewer panel for showing test execution progress and results.
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict
 
 import customtkinter as ctk
 
@@ -50,19 +50,12 @@ class TestResultsViewer(ctk.CTkFrame):
         self.test_counter = 0
 
         # Title
-        self.title_label = ctk.CTkLabel(
-            self,
-            text="🧪 TEST RESULTS",
-            font=("Arial", 12, "bold")
-        )
+        self.title_label = ctk.CTkLabel(self, text="🧪 TEST RESULTS", font=("Arial", 12, "bold"))
         self.title_label.pack(pady=(5, 0), padx=10, anchor="w")
 
         # Summary label
         self.summary_label = ctk.CTkLabel(
-            self,
-            text="0/0 PASSED (0%)",
-            font=("Arial", 10),
-            text_color="gray"
+            self, text="0/0 PASSED (0%)", font=("Arial", 10), text_color="gray"
         )
         self.summary_label.pack(pady=(0, 5), padx=10, anchor="w")
 
@@ -92,10 +85,7 @@ class TestResultsViewer(ctk.CTkFrame):
         test_id = f"test_{self.test_counter}"
 
         # Create frame for this test
-        test_frame = ctk.CTkFrame(
-            self.scrollable_frame,
-            fg_color=("#2B2B2B", "#1E1E1E")
-        )
+        test_frame = ctk.CTkFrame(self.scrollable_frame, fg_color=("#2B2B2B", "#1E1E1E"))
         test_frame.pack(fill="x", pady=3, padx=3)
 
         # Store test info
@@ -113,36 +103,26 @@ class TestResultsViewer(ctk.CTkFrame):
 
         # Status icon
         status_label = ctk.CTkLabel(
-            header_frame,
-            text=self.STATUS_ICONS["pending"],
-            font=("Arial", 12)
+            header_frame, text=self.STATUS_ICONS["pending"], font=("Arial", 12)
         )
         status_label.pack(side="left")
         self.test_data[test_id]["status_label"] = status_label
 
         # Test name
         name_label = ctk.CTkLabel(
-            header_frame,
-            text=f"Test {self.test_counter}: {name}",
-            font=("Arial", 11, "bold")
+            header_frame, text=f"Test {self.test_counter}: {name}", font=("Arial", 11, "bold")
         )
         name_label.pack(side="left", padx=5)
 
         # Inputs label
         inputs_label = ctk.CTkLabel(
-            test_frame,
-            text=f"Inputs: {inputs}",
-            font=("Arial", 10),
-            text_color="gray"
+            test_frame, text=f"Inputs: {inputs}", font=("Arial", 10), text_color="gray"
         )
         inputs_label.pack(anchor="w", padx=10)
 
         # Expected label
         expected_label = ctk.CTkLabel(
-            test_frame,
-            text=f"Expected: {expected}",
-            font=("Arial", 10),
-            text_color="gray"
+            test_frame, text=f"Expected: {expected}", font=("Arial", 10), text_color="gray"
         )
         expected_label.pack(anchor="w", padx=10)
 
@@ -162,13 +142,9 @@ class TestResultsViewer(ctk.CTkFrame):
             return
 
         self.test_data[test_id]["status"] = "running"
-        self.test_data[test_id]["status_label"].configure(
-            text=self.STATUS_ICONS["running"]
-        )
+        self.test_data[test_id]["status_label"].configure(text=self.STATUS_ICONS["running"])
 
-    def update_test_passed(
-        self, test_id: str, output: str, elapsed: float
-    ) -> None:
+    def update_test_passed(self, test_id: str, output: str, elapsed: float) -> None:
         """
         Mark test as passed.
 
@@ -182,9 +158,7 @@ class TestResultsViewer(ctk.CTkFrame):
 
         test_info = self.test_data[test_id]
         test_info["status"] = "passed"
-        test_info["status_label"].configure(
-            text=self.STATUS_ICONS["passed"]
-        )
+        test_info["status_label"].configure(text=self.STATUS_ICONS["passed"])
         test_info["status_label"].configure(text_color=self.PASSED_COLOR)
 
         # Add output label
@@ -192,7 +166,7 @@ class TestResultsViewer(ctk.CTkFrame):
             test_info["frame"],
             text=f"Output ({elapsed:.2f}s): {output[:100]}",
             font=("Arial", 10),
-            text_color=self.PASSED_COLOR
+            text_color=self.PASSED_COLOR,
         )
         output_label.pack(anchor="w", padx=10, pady=(0, 5))
 
@@ -211,9 +185,7 @@ class TestResultsViewer(ctk.CTkFrame):
 
         test_info = self.test_data[test_id]
         test_info["status"] = "failed"
-        test_info["status_label"].configure(
-            text=self.STATUS_ICONS["failed"]
-        )
+        test_info["status_label"].configure(text=self.STATUS_ICONS["failed"])
         test_info["status_label"].configure(text_color=self.FAILED_COLOR)
 
         # Add error label
@@ -221,7 +193,7 @@ class TestResultsViewer(ctk.CTkFrame):
             test_info["frame"],
             text=f"Error: {error[:100]}",
             font=("Arial", 10),
-            text_color=self.FAILED_COLOR
+            text_color=self.FAILED_COLOR,
         )
         error_label.pack(anchor="w", padx=10, pady=(0, 5))
 
@@ -231,13 +203,12 @@ class TestResultsViewer(ctk.CTkFrame):
         """Update summary label."""
         total = len(self.test_data)
         passed = sum(1 for t in self.test_data.values() if t["status"] == "passed")
-        failed = sum(1 for t in self.test_data.values() if t["status"] == "failed")
 
         if total > 0:
             rate = (passed / total) * 100
             self.summary_label.configure(
                 text=f"{passed}/{total} PASSED ({rate:.0f}%)",
-                text_color=self.PASSED_COLOR if passed == total else "gray"
+                text_color=self.PASSED_COLOR if passed == total else "gray",
             )
         else:
             self.summary_label.configure(text="0/0 PASSED (0%)")
@@ -276,6 +247,4 @@ class TestResultsViewer(ctk.CTkFrame):
         Args:
             **kwargs: Configuration options
         """
-        if "fg_color" in kwargs:
-            self.configure(fg_color=kwargs["fg_color"])
         super().configure(**kwargs)

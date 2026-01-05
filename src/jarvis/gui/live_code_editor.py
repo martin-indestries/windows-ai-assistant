@@ -4,7 +4,6 @@ Live code editor panel for real-time code viewing with syntax highlighting.
 
 import logging
 import re
-from typing import Optional
 
 import customtkinter as ctk
 
@@ -32,11 +31,48 @@ class LiveCodeEditor(ctk.CTkFrame):
 
     # Python keywords to highlight
     KEYWORDS = {
-        "def", "class", "if", "elif", "else", "for", "while", "break", "continue",
-        "return", "yield", "import", "from", "as", "try", "except", "finally",
-        "with", "pass", "raise", "lambda", "and", "or", "not", "in", "is",
-        "True", "False", "None", "async", "await", "assert", "del", "global",
-        "nonlocal", "print", "input", "range", "len", "str", "int", "float",
+        "def",
+        "class",
+        "if",
+        "elif",
+        "else",
+        "for",
+        "while",
+        "break",
+        "continue",
+        "return",
+        "yield",
+        "import",
+        "from",
+        "as",
+        "try",
+        "except",
+        "finally",
+        "with",
+        "pass",
+        "raise",
+        "lambda",
+        "and",
+        "or",
+        "not",
+        "in",
+        "is",
+        "True",
+        "False",
+        "None",
+        "async",
+        "await",
+        "assert",
+        "del",
+        "global",
+        "nonlocal",
+        "print",
+        "input",
+        "range",
+        "len",
+        "str",
+        "int",
+        "float",
     }
 
     def __init__(self, parent_frame, **kwargs):
@@ -52,19 +88,12 @@ class LiveCodeEditor(ctk.CTkFrame):
         self.configure(fg_color=("#2B2B2B", "#1E1E1E"))
 
         # Title
-        self.title_label = ctk.CTkLabel(
-            self,
-            text="📝 GENERATED CODE",
-            font=("Arial", 12, "bold")
-        )
+        self.title_label = ctk.CTkLabel(self, text="📝 GENERATED CODE", font=("Arial", 12, "bold"))
         self.title_label.pack(pady=(5, 0), padx=10, anchor="w")
 
         # Code count label
         self.count_label = ctk.CTkLabel(
-            self,
-            text="0 lines | 0 chars",
-            font=("Arial", 10),
-            text_color="gray"
+            self, text="0 lines | 0 chars", font=("Arial", 10), text_color="gray"
         )
         self.count_label.pack(pady=(0, 5), padx=10, anchor="w")
 
@@ -187,9 +216,7 @@ class LiveCodeEditor(ctk.CTkFrame):
             # Move to next line
             current_index = self.code_text.index(f"{current_index}+1l")
 
-    def _highlight_pattern(
-        self, start_index: str, line: str, pattern: str, tag: str
-    ) -> None:
+    def _highlight_pattern(self, start_index: str, line: str, pattern: str, tag: str) -> None:
         """
         Highlight all matches of a pattern in a line.
 
@@ -218,7 +245,7 @@ class LiveCodeEditor(ctk.CTkFrame):
         Returns:
             Code text
         """
-        return self.code_text.get("1.0", "end-1c")
+        return str(self.code_text.get("1.0", "end-1c"))
 
     def configure(self, **kwargs) -> None:
         """
@@ -227,6 +254,4 @@ class LiveCodeEditor(ctk.CTkFrame):
         Args:
             **kwargs: Configuration options
         """
-        if "fg_color" in kwargs:
-            self.configure(fg_color=kwargs["fg_color"])
         super().configure(**kwargs)

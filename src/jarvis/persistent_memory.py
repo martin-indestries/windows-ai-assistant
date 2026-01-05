@@ -3,8 +3,10 @@ Persistent memory module with pluggable storage backends.
 
 Provides CRUD operations and contextual retrieval APIs for storing and
 retrieving user preferences, past tasks, device info, and learned tool metadata.
+Extended with conversation and execution memory support.
 """
 
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -12,6 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from jarvis.json_backend import JSONBackend
+from jarvis.memory_models import ConversationMemory, ExecutionMemory
+from jarvis.memory_search import MemorySearch
 from jarvis.sqlite_backend import SQLiteBackend
 from jarvis.storage_backend import MemoryEntry, StorageBackend
 
@@ -49,6 +53,10 @@ class MemoryModule:
         else:
             storage_dir = Path.home() / ".jarvis" / "memory"
             self.backend = self._create_backend(backend_type, storage_dir)
+
+        self.search_engine = MemorySearch()
+        self._conversation_cache: List[ConversationMemory] = []
+        self._execution_cache: List[ExecutionMemory] = []
 
         logger.info(f"MemoryModule initialized with {backend_type} backend")
 
@@ -418,3 +426,239 @@ class MemoryModule:
         logger.warning("Clearing all memory entries")
         for entry in self.list_memories():
             self.delete_memory(entry.id)
+
+    # ===== Enhanced Memory Methods for Conversation and Execution Tracking =====
+
+    def save_conversation_turn(
+        self,
+        user_message: str,
+        assistant_response: str,
+        execution_history: Optional[List[ExecutionMemory]] = None,
+        context_tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Save a complete conversation turn to memory.
+
+        Args:
+            user_message: The user's message
+            assistant_response: The assistant's response
+            execution_history: Optional list of executions from this turn
+            context_tags: Optional tags for context categorization
+            metadata: Optional additional metadata
+
+        Returns:
+            ID of the saved conversation
+        """
+        conversation = ConversationMemory(
+            user_message=user_message,
+            assistant_response=assistant_response,
+            execution_history=execution_history or [],
+            context_tags=context_tags or [],
+            metadata=metadata or {},
+        )
+
+        # Store execution history separately first
+        execution_ids = []
+        if execution_history:
+            for execution in execution_history:
+                exec_id = self._save_execution_record(execution)
+                if exec_id:
+                    execution_ids.append(exec_id)
+
+        # Store conversation in main memory system
+        conversation_data = conversation.model_dump()
+        conversation_data["execution_ids"] = execution_ids
+
+        conversation_id = self.create_memory(
+            category="conversations",
+            key=f"conversation_{conversation.timestamp.isoformat()}",
+            value=conversation_data,
+            entity_type="conversation",
+            entity_id=conversation.turn_id,
+            tags=context_tags or ["conversation"],
+            module="memory_module",
+        )
+
+        # Update cache
+        self._conversation_cache.append(conversation)
+        if execution_history:
+            self._execution_cache.extend(execution_history)
+
+        logger.info(f"Saved conversation turn: {conversation_id}")
+        return conversation_id
+
+    def _save_execution_record(self, execution: ExecutionMemory) -> Optional[str]:
+        """Save an execution as a separate memory entry."""
+        try:
+            execution_data = execution.model_dump()
+            execution_id = self.create_memory(
+                category="executions",
+                key=f"execution_{execution.timestamp.isoformat()}_{execution.execution_id[:8]}",
+                value=execution_data,
+                entity_type="execution",
+                entity_id=execution.execution_id,
+                tags=execution.tags,
+                module="execution_tracker",
+            )
+            logger.debug(f"Saved execution record: {execution_id}")
+            return execution_id
+        except Exception as e:
+            logger.error(f"Failed to save execution record: {e}")
+            return None
+
+    def search_by_description(self, query: str, limit: int = 5) -> List[ExecutionMemory]:
+        """
+        Find past executions by semantic search.
+
+        Args:
+            query: Search query (e.g., "web scraper", "file counter")
+            limit: Maximum number of results
+
+        Returns:
+            List of matching executions
+        """
+        # Get executions from storage
+        execution_entries = self.get_memories_by_category("executions")
+        executions = []
+
+        for entry in execution_entries:
+            try:
+                execution_data = entry.value
+                # Ensure required fields exist for backward compatibility
+                execution_data.setdefault("execution_id", entry.entity_id or entry.id)
+                execution_data.setdefault("timestamp", entry.timestamp)
+                execution_data.setdefault("user_request", "")
+                execution_data.setdefault("description", entry.key)
+
+                execution = ExecutionMemory(**execution_data)
+                executions.append(execution)
+            except Exception as e:
+                logger.warning(f"Failed to parse execution from memory entry {entry.id}: {e}")
+                continue
+
+        # Search using the search engine
+        return self.search_engine.search_by_description(query, executions, limit)
+
+    def get_executions_by_tag(self, tag: str, limit: Optional[int] = None) -> List[ExecutionMemory]:
+        """
+        Get executions by tag.
+
+        Args:
+            tag: Tag to search for
+            limit: Optional limit on number of results
+
+        Returns:
+            List of matching executions
+        """
+        entries = self.get_memories_by_tags([tag])
+        executions = []
+
+        for entry in entries:
+            if entry.category == "executions":
+                try:
+                    execution_data = entry.value
+                    execution_data.setdefault("execution_id", entry.entity_id or entry.id)
+                    execution_data.setdefault("timestamp", entry.timestamp)
+                    execution = ExecutionMemory(**execution_data)
+                    executions.append(execution)
+                except Exception as e:
+                    logger.warning(f"Failed to parse execution: {e}")
+                    continue
+
+        if limit:
+            executions = executions[:limit]
+
+        return executions
+
+    def get_conversation_history(self, limit: Optional[int] = None) -> List[ConversationMemory]:
+        """
+        Get stored conversation history.
+
+        Args:
+            limit: Optional limit on number of conversations
+
+        Returns:
+            List of conversations
+        """
+        entries = self.get_memories_by_category("conversations")
+        conversations = []
+
+        for entry in entries:
+            try:
+                conversation_data = entry.value
+                conversation_data.setdefault("turn_id", entry.entity_id or entry.id)
+                conversation_data.setdefault("timestamp", entry.timestamp)
+                conversation_data.setdefault("user_message", "")
+                conversation_data.setdefault("assistant_response", "")
+                conversation_data.setdefault("execution_history", [])
+                conversation_data.setdefault("context_tags", entry.tags)
+
+                # Reconstruct execution history if IDs are stored
+                execution_history = []
+                for exec_data in conversation_data.get("execution_history", []):
+                    try:
+                        if isinstance(exec_data, dict):
+                            execution = ExecutionMemory(**exec_data)
+                            execution_history.append(execution)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse execution in conversation: {e}")
+                        continue
+
+                conversation_data["execution_history"] = execution_history
+                conversation = ConversationMemory(**conversation_data)
+                conversations.append(conversation)
+            except Exception as e:
+                logger.warning(f"Failed to parse conversation from memory entry {entry.id}: {e}")
+                continue
+
+        # Sort by timestamp (newest first)
+        conversations.sort(key=lambda x: x.timestamp, reverse=True)
+
+        if limit:
+            conversations = conversations[:limit]
+
+        return conversations
+
+    def get_recent_context(self, num_turns: int = 5) -> str:
+        """
+        Get recent conversation context for injection into prompts.
+
+        Args:
+            num_turns: Number of recent conversation turns to include
+
+        Returns:
+            Formatted context string
+        """
+        conversations = self.get_conversation_history(limit=num_turns * 2)  # Get extra for safety
+        return self.search_engine.get_recent_context(conversations, num_turns)
+
+    def get_file_locations(self, description: str) -> List[str]:
+        """
+        Get file paths for executions matching a description.
+
+        Args:
+            description: Description to search for (e.g., "counter program")
+
+        Returns:
+            List of file paths
+        """
+        executions = self.get_executions_by_tag("executions") or self.get_memories_by_category("executions")
+        execution_objects = []
+
+        for entry in executions:
+            try:
+                if hasattr(entry, 'value'):  # MemoryEntry
+                    execution_data = entry.value
+                    execution_data.setdefault("execution_id", entry.entity_id or entry.id)
+                    execution_data.setdefault("timestamp", entry.timestamp)
+                else:  # Already an ExecutionMemory
+                    execution_data = entry.model_dump() if hasattr(entry, 'model_dump') else entry
+
+                execution = ExecutionMemory(**execution_data)
+                execution_objects.append(execution)
+            except Exception as e:
+                logger.warning(f"Failed to parse execution: {e}")
+                continue
+
+        return self.search_engine.get_file_locations(description, execution_objects)

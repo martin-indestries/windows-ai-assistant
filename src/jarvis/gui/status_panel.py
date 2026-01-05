@@ -3,7 +3,6 @@ Status panel for showing execution progress and status.
 """
 
 import logging
-from typing import Optional
 
 import customtkinter as ctk
 
@@ -55,9 +54,7 @@ class StatusPanel(ctk.CTkFrame):
 
         # Title
         self.title_label = ctk.CTkLabel(
-            self,
-            text="📊 EXECUTION STATUS",
-            font=("Arial", 12, "bold")
+            self, text="📊 EXECUTION STATUS", font=("Arial", 12, "bold")
         )
         self.title_label.pack(pady=(5, 0), padx=10, anchor="w")
 
@@ -71,18 +68,10 @@ class StatusPanel(ctk.CTkFrame):
             step_frame = ctk.CTkFrame(self.steps_frame, fg_color="transparent")
             step_frame.pack(fill="x", pady=1)
 
-            icon_label = ctk.CTkLabel(
-                step_frame,
-                text=self.PENDING_ICON,
-                font=("Arial", 10)
-            )
+            icon_label = ctk.CTkLabel(step_frame, text=self.PENDING_ICON, font=("Arial", 10))
             icon_label.pack(side="left", padx=5)
 
-            step_label = ctk.CTkLabel(
-                step_frame,
-                text=step_name,
-                font=("Arial", 10)
-            )
+            step_label = ctk.CTkLabel(step_frame, text=step_name, font=("Arial", 10))
             step_label.pack(side="left")
 
             self.step_labels[step_name] = icon_label
@@ -93,19 +82,13 @@ class StatusPanel(ctk.CTkFrame):
 
         # Elapsed time
         self.elapsed_label = ctk.CTkLabel(
-            self.info_frame,
-            text="Elapsed: 0.0s",
-            font=("Arial", 10),
-            text_color="gray"
+            self.info_frame, text="Elapsed: 0.0s", font=("Arial", 10), text_color="gray"
         )
         self.elapsed_label.pack(side="left", padx=10)
 
         # Attempt count
         self.attempt_label = ctk.CTkLabel(
-            self.info_frame,
-            text="Attempt: 0/0",
-            font=("Arial", 10),
-            text_color="gray"
+            self.info_frame, text="Attempt: 0/0", font=("Arial", 10), text_color="gray"
         )
         self.attempt_label.pack(side="left", padx=10)
 
@@ -149,8 +132,7 @@ class StatusPanel(ctk.CTkFrame):
         step_name = self.STEPS[step_num - 1][0]
         self.step_status[step_name] = "done"
         self.step_labels[step_name].configure(
-            text=self.DONE_ICON,
-            text_color=self._get_done_color()
+            text=self.DONE_ICON, text_color=self._get_done_color()
         )
 
     def mark_step_error(self, step_num: int) -> None:
@@ -165,10 +147,7 @@ class StatusPanel(ctk.CTkFrame):
 
         step_name = self.STEPS[step_num - 1][0]
         self.step_status[step_name] = "error"
-        self.step_labels[step_name].configure(
-            text=self.ERROR_ICON,
-            text_color="red"
-        )
+        self.step_labels[step_name].configure(text=self.ERROR_ICON, text_color="red")
 
     def set_status(self, status: str) -> None:
         """
@@ -202,26 +181,24 @@ class StatusPanel(ctk.CTkFrame):
     def start_timer(self) -> None:
         """Start the elapsed time counter."""
         import time
+
         self.start_time = time.time()
 
     def update_timer(self) -> None:
         """Update elapsed time display."""
         import time
+
         if self.start_time:
             elapsed = time.time() - self.start_time
             self.set_elapsed_time(elapsed)
 
     def reset(self) -> None:
         """Reset status panel to initial state."""
-        import time
         self.start_time = None
         self.step_status = {step[0]: "pending" for step in self.STEPS}
 
         for step_name, label in self.step_labels.items():
-            label.configure(
-                text=self.PENDING_ICON,
-                text_color="gray"
-            )
+            label.configure(text=self.PENDING_ICON, text_color="gray")
 
         self.elapsed_label.configure(text="Elapsed: 0.0s")
         self.attempt_label.configure(text="Attempt: 0/0")
@@ -237,6 +214,4 @@ class StatusPanel(ctk.CTkFrame):
         Args:
             **kwargs: Configuration options
         """
-        if "fg_color" in kwargs:
-            self.configure(fg_color=kwargs["fg_color"])
         super().configure(**kwargs)

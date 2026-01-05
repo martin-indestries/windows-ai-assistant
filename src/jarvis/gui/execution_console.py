@@ -4,7 +4,6 @@ Execution console panel for live program execution output.
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 import customtkinter as ctk
 
@@ -50,9 +49,7 @@ class ExecutionConsole(ctk.CTkFrame):
 
         # Title
         self.title_label = ctk.CTkLabel(
-            self,
-            text="▶️ EXECUTION CONSOLE",
-            font=("Arial", 12, "bold")
+            self, text="▶️ EXECUTION CONSOLE", font=("Arial", 12, "bold")
         )
         self.title_label.pack(pady=(5, 0), padx=10, anchor="w")
 
@@ -183,7 +180,7 @@ class ExecutionConsole(ctk.CTkFrame):
         Returns:
             Console text
         """
-        return self.console_text.get("1.0", "end-1c")
+        return str(self.console_text.get("1.0", "end-1c"))
 
     def configure(self, **kwargs) -> None:
         """
@@ -192,6 +189,4 @@ class ExecutionConsole(ctk.CTkFrame):
         Args:
             **kwargs: Configuration options
         """
-        if "fg_color" in kwargs:
-            self.configure(fg_color=kwargs["fg_color"])
         super().configure(**kwargs)

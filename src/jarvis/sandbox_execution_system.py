@@ -12,12 +12,10 @@ This module integrates:
 """
 
 import logging
-import sys
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Dict, Optional
 
 from jarvis.code_cleaner import CodeCleaner
-from jarvis.conversation_context import ConversationContext
 from jarvis.execution_debugger import ExecutionDebugger
 from jarvis.interactive_executor import InteractiveExecutor
 from jarvis.interactive_program_analyzer import InteractiveProgramAnalyzer, ProgramType
@@ -81,7 +79,7 @@ class SandboxExecutionSystem:
         user_request: str,
         language: str = "python",
         max_retries: int = 10,
-        gui_callback: Optional[callable] = None,
+        gui_callback: Optional[Callable] = None,
     ) -> dict:
         """
         Execute a user request with full sandbox workflow.
@@ -115,12 +113,20 @@ class SandboxExecutionSystem:
             self._notify_gui(gui_callback, "sandbox_created", {"sandbox_id": sandbox.sandbox_id})
 
             # Notify step progress
-            self._notify_gui(gui_callback, "step_progress", {"step": 1, "total": 7, "description": "Creating sandbox"})
+            self._notify_gui(
+                gui_callback,
+                "step_progress",
+                {"step": 1, "total": 7, "description": "Creating sandbox"},
+            )
 
             # Retry loop
             for attempt in range(max_retries):
                 result["retry_count"] = attempt + 1
-                self._notify_gui(gui_callback, "retry_attempt", {"attempt": attempt + 1, "max_attempts": max_retries})
+                self._notify_gui(
+                    gui_callback,
+                    "retry_attempt",
+                    {"attempt": attempt + 1, "max_attempts": max_retries},
+                )
 
                 # Step 2: Generate code with learned patterns
                 self._notify_gui(gui_callback, "code_generation_started", {})
@@ -193,7 +199,7 @@ class SandboxExecutionSystem:
         user_request: str,
         language: str,
         log_id: Optional[str],
-        gui_callback: Optional[callable] = None,
+        gui_callback: Optional[Callable] = None,
     ) -> Optional[str]:
         """
         Generate code using LLM with learned patterns.
@@ -224,6 +230,7 @@ class SandboxExecutionSystem:
 
             # Notify about prompts injected
             from jarvis.prompt_injector import PromptInjector
+
             injector = PromptInjector()
             input_count = injector.count_input_calls(cleaned_code)
 
@@ -232,10 +239,11 @@ class SandboxExecutionSystem:
 
             self._notify_gui(gui_callback, "code_generated", {"code": cleaned_code})
             self._notify_gui(gui_callback, "code_generation_complete", {})
-            self._notify_gui(gui_callback, "prompts_injected", {
-                "count": input_count,
-                "code_preview": cleaned_code[:200]
-            })
+            self._notify_gui(
+                gui_callback,
+                "prompts_injected",
+                {"count": input_count, "code_preview": cleaned_code[:200]},
+            )
 
             return cleaned_code
 
@@ -282,7 +290,7 @@ Requirements:
         script_path: Path,
         analysis: dict,
         log_id: Optional[str],
-        gui_callback: Optional[callable],
+        gui_callback: Optional[Callable],
     ) -> list:
         """
         Run tests for the program.
@@ -306,26 +314,31 @@ Requirements:
         # Get program type
         program_type = ProgramType(analysis["program_type"])
 
-        # Generate test cases
+        # Read code and count input() calls
+        code = script_path.read_text()
+        from jarvis.prompt_injector import PromptInjector
+
+        injector = PromptInjector()
+        input_count = injector.count_input_calls(code)
+
+        logger.info(f"Detected {input_count} input() calls in generated code")
+
+        # Generate test cases with correct number of inputs
         test_cases = self.test_generator.generate_test_cases(
             program_type=program_type,
-            code=script_path.read_text(),
+            code=code,
+            input_count=input_count,
         )
 
-        self._notify_gui(gui_callback, "test_cases_generated", {
-            "count": len(test_cases),
-            "tests": test_cases
-        })
+        self._notify_gui(
+            gui_callback, "test_cases_generated", {"count": len(test_cases), "tests": test_cases}
+        )
 
         # Notify test execution started
         self._notify_gui(gui_callback, "test_execution_started", {})
 
         # Execute tests
-        results = self.interactive_executor.execute_all_tests(
-            script_path,
-            test_cases,
-            gui_callback
-        )
+        results = self.interactive_executor.execute_all_tests(script_path, test_cases, gui_callback)
 
         # Log results
         for i, result in enumerate(results, 1):

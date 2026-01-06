@@ -8,7 +8,7 @@ and adds meaningful prompts to make test inputs flow automatically.
 import ast
 import logging
 import re
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -46,8 +46,14 @@ class PromptInjector:
         "Enter: ",
     ]
 
-    def __init__(self) -> None:
-        """Initialize prompt injector."""
+    def __init__(self, debug_enabled: bool = False) -> None:
+        """
+        Initialize prompt injector.
+
+        Args:
+            debug_enabled: Enable debug logging
+        """
+        self.debug_enabled = debug_enabled
         logger.info("PromptInjector initialized")
 
     def inject_prompts(self, code: str, log_id: Optional[str] = None) -> str:
@@ -85,7 +91,7 @@ class PromptInjector:
         inputs_needing_prompts = self._find_input_calls(tree)
 
         if not inputs_needing_prompts:
-            logger.debug(f"No input() calls found requiring prompts")
+            logger.debug("No input() calls found requiring prompts")
             return code
 
         logger.info(f"Found {len(inputs_needing_prompts)} input() calls needing prompts")
@@ -138,9 +144,7 @@ class PromptInjector:
 
         return inputs_needing_prompts
 
-    def _generate_prompts(
-        self, input_calls: List[ast.Call], code: str
-    ) -> List[str]:
+    def _generate_prompts(self, input_calls: List[ast.Call], code: str) -> List[str]:
         """
         Generate appropriate prompts for each input call.
 
@@ -249,11 +253,9 @@ class PromptInjector:
         # Clean up whitespace
         text = " ".join(text.split())
 
-        return text if text else None
+        return text if text else ""
 
-    def _apply_prompts(
-        self, code: str, input_calls: List[ast.Call], prompts: List[str]
-    ) -> str:
+    def _apply_prompts(self, code: str, input_calls: List[ast.Call], prompts: List[str]) -> str:
         """
         Apply generated prompts to the source code.
 
@@ -372,9 +374,7 @@ class PromptInjector:
 
         return False
 
-    def _log_injection(
-        self, log_id: str, count: int, modified_code: str
-    ) -> None:
+    def _log_injection(self, log_id: str, count: int, modified_code: str) -> None:
         """
         Log prompt injection details.
 

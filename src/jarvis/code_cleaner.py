@@ -75,7 +75,7 @@ class CodeCleaner:
             self._log_issues(issues, log_id)
 
         # Inject prompts for interactive programs
-        injector = PromptInjector()
+        injector = PromptInjector(debug_enabled=False)
         input_count = injector.count_input_calls(cleaned)
         if input_count > 0:
             logger.info(f"Injecting prompts into {input_count} input() calls")

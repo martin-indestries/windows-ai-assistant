@@ -5,6 +5,7 @@ Handles DIRECT mode requests: generate code, write to file, execute immediately.
 """
 
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -18,7 +19,7 @@ from jarvis.memory_models import ExecutionMemory
 from jarvis.mistake_learner import MistakeLearner
 from jarvis.persistent_memory import MemoryModule
 from jarvis.retry_parsing import format_attempt_progress, parse_retry_limit
-from jarvis.utils import clean_code
+from jarvis.utils import clean_code, detect_input_calls, generate_test_inputs, has_input_calls
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,172 @@ class DirectExecutor:
             logger.error(f"Failed to write script: {e}")
             raise
 
+    def save_code_to_desktop(
+        self, code: str, user_request: str, script_path: Optional[Path] = None
+    ) -> Path:
+        """
+        Save generated code to Desktop with timestamp.
+
+        Args:
+            code: Code content to save
+            user_request: Original user request (for generating filename)
+            script_path: Optional existing script path to copy from
+
+        Returns:
+            Path to the saved file on Desktop
+        """
+        from jarvis.prompt_injector import PromptInjector
+
+        # Inject prompts for interactive programs
+        injector = PromptInjector()
+        code_with_prompts = injector.inject_prompts(code)
+
+        # Generate filename from user request
+        desktop = Path.home() / "Desktop"
+        filename = self._generate_safe_filename(user_request) + ".py"
+        file_path = desktop / filename
+
+        try:
+            # If we have an existing script, copy it
+            if script_path and script_path.exists():
+                import shutil
+
+                shutil.copy2(script_path, file_path)
+                logger.info(f"Copied script to Desktop: {file_path}")
+            else:
+                # Write code directly
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(code_with_prompts)
+                logger.info(f"Saved code to Desktop: {file_path}")
+
+            return file_path
+        except Exception as e:
+            logger.error(f"Failed to save code to Desktop: {e}")
+            # Fallback to temp directory
+            fallback_path = Path(tempfile.gettempdir()) / filename
+            with open(fallback_path, "w", encoding="utf-8") as f:
+                f.write(code_with_prompts)
+            logger.info(f"Saved to temp instead: {fallback_path}")
+            return fallback_path
+
+    def _generate_safe_filename(self, user_request: str) -> str:
+        """
+        Generate a safe filename from user request.
+
+        Args:
+            user_request: Original user request
+
+        Returns:
+            Safe filename string
+        """
+        # Extract key words from request
+        request_lower = user_request.lower()
+
+        # Remove common phrases
+        for phrase in [
+            "write a program that",
+            "create a program",
+            "write me",
+            "create",
+            "generate",
+            "python program",
+            "python script",
+            "script that",
+            "program that",
+        ]:
+            request_lower = request_lower.replace(phrase, "")
+
+        # Extract alphanumeric words
+        words = re.findall(r"[a-z0-9]+", request_lower)
+
+        # Take first 5 meaningful words
+        meaningful_words = [w for w in words if len(w) > 2][:5]
+
+        if not meaningful_words:
+            return f"jarvis_script_{int(time.time())}"
+
+        return "jarvis_" + "_".join(meaningful_words)
+
+    def execute_with_input_support(
+        self,
+        script_path: Path,
+        timeout: int = 30,
+    ) -> Generator[str, None, None]:
+        """
+        Execute script with stdin support for interactive programs.
+
+        Detects input() calls and generates test inputs automatically.
+
+        Args:
+            script_path: Path to the script to execute
+            timeout: Execution timeout in seconds
+
+        Yields:
+            Output lines as they arrive
+        """
+        logger.info(f"Executing with input support: {script_path}")
+
+        # Read code and detect input calls
+        code = script_path.read_text()
+        input_count, prompts = detect_input_calls(code)
+
+        if input_count == 0:
+            # No input calls, use regular execution
+            yield from self.stream_execution(script_path, timeout)
+            return
+
+        logger.info(f"Detected {input_count} input() call(s), generating test inputs")
+
+        # Generate test inputs
+        test_inputs = generate_test_inputs(prompts)
+        logger.info(f"Generated test inputs: {test_inputs}")
+
+        try:
+            # Windows-specific subprocess creation
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            # Use Popen for stdin support
+            process = subprocess.Popen(
+                [sys.executable, str(script_path)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=creation_flags,
+            )
+
+            # Send all inputs joined with newlines
+            input_data = "\n".join(test_inputs) + "\n"
+            process.stdin.write(input_data)
+            process.stdin.flush()
+
+            # Read output in real-time
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+
+                if line:
+                    yield line
+                    logger.debug(f"stdout: {line.rstrip()}")
+
+            # Get exit code
+            exit_code = process.wait(timeout=5)
+            logger.info(f"Process exited with code {exit_code}")
+
+            if exit_code != 0:
+                yield f"\n❌ Script failed with exit code {exit_code}\n"
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Script execution timeout after {timeout}s")
+            yield f"\n❌ Error: Execution timed out after {timeout} seconds"
+        except Exception as e:
+            logger.error(f"Failed to execute script: {e}")
+            yield f"\n❌ Error: {str(e)}"
+
     def stream_execution(self, script_path: Path, timeout: int = 30) -> Generator[str, None, None]:
         """
         Execute script and stream output.
@@ -215,6 +382,7 @@ class DirectExecutor:
         attempt = 1
         code: Optional[str] = None
         last_error_output = ""
+        desktop_path: Optional[Path] = None
 
         # Keep a stable filename so retries overwrite the previous attempt rather than
         # producing many temp files.
@@ -244,19 +412,58 @@ class DirectExecutor:
 
                 yield "   ✓ Code generated\n\n"
 
-                yield "📄 Writing to file...\n"
+                # Detect if code has input() calls
+                has_interactive = has_input_calls(code)
+                input_count, prompts = detect_input_calls(code)
+
+                if has_interactive:
+                    yield f"🔍 Detected {input_count} input() call(s)\n"
+
+                # Save code to desktop BEFORE execution (always save, regardless of success/failure)
+                yield "💾 Saving code to Desktop...\n"
+                try:
+                    desktop_path = self.save_code_to_desktop(code, user_request, None)
+                    yield f"   ✓ Saved to: {desktop_path}\n"
+                except Exception as e:
+                    yield f"   ⚠️  Could not save to Desktop: {e}\n"
+
+                yield "\n"
+
+                # Write temp script for execution
+                yield "📄 Writing to temp file...\n"
                 script_path = self.write_execution_script(code, filename=filename)
                 yield f"   ✓ Written to {script_path}\n\n"
 
-                yield f"▶️ Executing script... ({progress})\n\n"
-                exit_code, combined_output = self._run_script_capture(script_path, timeout)
+                # Execute with input support for interactive programs
+                yield f"▶️ Executing script... ({progress})\n"
 
-                if combined_output:
-                    for line in combined_output.splitlines(keepends=True):
+                # Track execution output and exit code
+                combined_output = ""
+                exit_code = 0
+
+                if has_interactive:
+                    yield f"   🚀 Running with auto-generated test inputs\n\n"
+                    # Execute with input support - this returns (exit_code, output)
+                    exit_code, exec_output = self._run_script_with_input_support(
+                        script_path, timeout
+                    )
+                    # Yield output line by line
+                    for line in exec_output.splitlines(keepends=True):
                         yield line
+                        combined_output += line
+                else:
+                    # Use regular execution
+                    for line in self.stream_execution(script_path, timeout):
+                        yield line
+                        combined_output += line
+                    # Get exit code
+                    exit_code, _ = self._run_script_capture(script_path, timeout)
 
                 if exit_code == 0:
                     yield "\n\n✅ Execution complete\n"
+
+                    if desktop_path:
+                        yield f"📁 Code saved to: {desktop_path}\n"
 
                     # Save execution to memory
                     if self.memory_module:
@@ -265,7 +472,9 @@ class DirectExecutor:
                                 user_request=user_request,
                                 description=self._generate_description(user_request, code),
                                 code_generated=code,
-                                file_locations=[str(script_path)],
+                                file_locations=[str(script_path), str(desktop_path)]
+                                if desktop_path
+                                else [str(script_path)],
                                 output=combined_output,
                                 success=True,
                                 tags=["python", "direct_execution"],
@@ -324,6 +533,54 @@ class DirectExecutor:
             return process.returncode, combined
         except subprocess.TimeoutExpired:
             return 124, f"Execution timed out after {timeout} seconds"
+
+    def _run_script_with_input_support(
+        self, script_path: Path, timeout: int
+    ) -> tuple[int, str]:
+        """
+        Run a script with stdin support for interactive programs.
+
+        Args:
+            script_path: Path to the script
+            timeout: Execution timeout
+
+        Returns:
+            Tuple of (exit_code, combined_output)
+        """
+        code = script_path.read_text()
+        input_count, prompts = detect_input_calls(code)
+
+        if input_count == 0:
+            # No input calls, use regular execution
+            return self._run_script_capture(script_path, timeout)
+
+        # Generate test inputs
+        test_inputs = generate_test_inputs(prompts)
+
+        creation_flags = 0
+        if sys.platform == "win32":
+            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+        try:
+            process = subprocess.Popen(
+                [sys.executable, str(script_path)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=creation_flags,
+            )
+
+            # Send all inputs
+            input_data = "\n".join(test_inputs) + "\n"
+            stdout, _ = process.communicate(input=input_data, timeout=timeout)
+
+            return process.returncode, stdout
+        except subprocess.TimeoutExpired:
+            return 124, f"Execution timed out after {timeout} seconds"
+        except Exception as e:
+            return 1, str(e)
 
     def _detect_desktop_save_request(self, user_request: str) -> bool:
         """Detect if user wants to save to desktop."""

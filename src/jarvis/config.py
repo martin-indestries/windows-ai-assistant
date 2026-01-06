@@ -72,8 +72,8 @@ class ExecutorLLMConfig(BaseModel):
 
     provider: str = Field(default="ollama", description="LLM provider (e.g., ollama, local)")
     model: str = Field(
-        default="codellama",
-        description="Model name for execution (codellama, llama3, deepseek-coder recommended)",
+        default="deepseek-coder:33b-instruct-q4_K_M",
+        description="Model name for execution (deepseek-coder:33b-instruct-q4_K_M recommended)",
     )
     base_url: Optional[str] = Field(
         default="http://localhost:11434", description="Base URL for provider"

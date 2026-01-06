@@ -9,10 +9,11 @@ import logging
 import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import Generator, List, Optional, Tuple
 
 from jarvis.execution_models import CodeStep
-from jarvis.utils import clean_code
+from jarvis.utils import clean_code, detect_input_calls, generate_test_inputs
 
 logger = logging.getLogger(__name__)
 
@@ -245,17 +246,31 @@ class ExecutionMonitor:
             # Clean markdown formatting from code before writing
             cleaned_code = clean_code(step.code)
 
+            # Check for input() calls
+            input_count, prompts = detect_input_calls(cleaned_code)
+            has_interactive = input_count > 0
+
+            if has_interactive:
+                logger.info(f"Detected {input_count} input() call(s), will use stdin support")
+
             # Write code to temp file
             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
                 f.write(cleaned_code)
                 temp_file = f.name
 
             try:
-                command = [sys.executable, temp_file]
-                for line, source, is_error in self.stream_subprocess_output(
-                    command, timeout=timeout
-                ):
-                    yield (line, is_error, None)
+                if has_interactive:
+                    # Execute with stdin support for interactive programs
+                    yield from self._execute_with_input_support(
+                        temp_file, timeout, prompts
+                    )
+                else:
+                    # Execute shell command
+                    command = [sys.executable, temp_file]
+                    for line, source, is_error in self.stream_subprocess_output(
+                        command, timeout=timeout
+                    ):
+                        yield (line, is_error, None)
             finally:
                 # Clean up temp file
                 try:
@@ -273,3 +288,71 @@ class ExecutionMonitor:
             error_msg = f"Step {step.step_number} has no code or command to execute"
             logger.error(error_msg)
             yield (error_msg, True, error_msg)
+
+    def _execute_with_input_support(
+        self,
+        script_path: str,
+        timeout: int,
+        prompts: List[str],
+    ) -> Generator[Tuple[str, bool, Optional[str]], None, None]:
+        """
+        Execute a script with stdin support for interactive programs.
+
+        Args:
+            script_path: Path to the script to execute
+            timeout: Execution timeout in seconds
+            prompts: List of prompts from input() calls
+
+        Yields:
+            Tuples of (output_line, is_error, error_message_if_any)
+        """
+        # Generate test inputs based on prompts
+        test_inputs = generate_test_inputs(prompts)
+        logger.info(f"Generated test inputs for execution: {test_inputs}")
+
+        try:
+            # Windows-specific subprocess creation
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
+
+            # Use Popen for stdin support
+            process = subprocess.Popen(
+                [sys.executable, script_path],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=creation_flags,
+            )
+
+            # Send all inputs joined with newlines
+            input_data = "\n".join(test_inputs) + "\n"
+            process.stdin.write(input_data)
+            process.stdin.flush()
+
+            # Read output in real-time
+            while True:
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+
+                if line:
+                    is_error = self._is_error_line(line)
+                    yield (line, is_error, None)
+                    logger.debug(f"stdout: {line.rstrip()}")
+
+            # Get exit code
+            exit_code = process.wait(timeout=5)
+            logger.info(f"Process exited with code {exit_code}")
+
+            if exit_code != 0:
+                yield (f"Process exited with code {exit_code}", True, None)
+
+        except subprocess.TimeoutExpired:
+            logger.warning(f"Script execution timeout after {timeout}s")
+            yield (f"Execution timed out after {timeout} seconds", True, None)
+        except Exception as e:
+            logger.error(f"Failed to execute script: {e}")
+            yield (f"Execution error: {str(e)}", True, None)

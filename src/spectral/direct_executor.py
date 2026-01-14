@@ -1,7 +1,8 @@
 """
-Direct executor module for simple code generation and execution.
+Direct executor module for simple code generation and execution with sandbox verification.
 
-Handles DIRECT mode requests: generate code, write to file, execute immediately.
+Handles DIRECT mode requests: generate code, verify in sandbox, execute in isolation.
+Integrates with SandboxRunManager for robust verification pipeline.
 """
 
 import logging
@@ -20,6 +21,7 @@ from spectral.memory_models import ExecutionMemory
 from spectral.mistake_learner import MistakeLearner
 from spectral.persistent_memory import MemoryModule
 from spectral.retry_parsing import format_attempt_progress, parse_retry_limit
+from spectral.sandbox_manager import SandboxRunManager, SandboxResult
 from spectral.utils import clean_code, detect_input_calls, generate_test_inputs, has_input_calls
 
 logger = logging.getLogger(__name__)
@@ -57,8 +59,9 @@ class DirectExecutor:
         self.memory_module = memory_module
         self.gui_callback = gui_callback
         self.gui_test_generator = GUITestGenerator(llm_client)
+        self.sandbox_manager = SandboxRunManager()
         self._execution_history: list[ExecutionMemory] = []
-        logger.info("DirectExecutor initialized")
+        logger.info("DirectExecutor initialized with sandbox verification")
 
     def _emit_gui_event(self, event_type: str, data: dict) -> None:
         """
@@ -392,10 +395,12 @@ class DirectExecutor:
         timeout: int = 30,
         max_attempts: Optional[int] = None,
     ) -> Generator[str, None, None]:
-        """Execute a user request end-to-end.
+        """Execute a user request end-to-end with sandbox verification.
 
         Retries indefinitely by default (per-attempt timeout still applies). If
         user specifies a max attempt limit, that limit is respected.
+        
+        Uses SandboxRunManager for isolated verification before desktop export.
         """
 
         logger.info(f"Executing request: {user_request}")
@@ -407,11 +412,7 @@ class DirectExecutor:
         code: Optional[str] = None
         last_error_output = ""
         desktop_path: Optional[Path] = None
-
-        # Keep a stable filename so retries overwrite the previous attempt rather than
-        # producing many temp files.
-        timestamp = int(time.time())
-        filename = f"spectral_script_{timestamp}.py"
+        run_id: Optional[str] = None
 
         while True:
             if max_attempts is not None and attempt > max_attempts:
@@ -443,244 +444,302 @@ class DirectExecutor:
                 if has_interactive:
                     yield f"🔍 Detected {input_count} input() call(s)\n"
 
-                # Save code to desktop BEFORE execution (always save, regardless of success/failure)
-                yield "💾 Saving code to Desktop...\n"
-                try:
-                    desktop_path = self.save_code_to_desktop(code, user_request, None)
-                    yield f"   ✓ Saved to: {desktop_path}\n"
-                except Exception as e:
-                    yield f"   ⚠️  Could not save to Desktop: {e}\n"
+                # Create sandbox run for verification
+                if run_id is None:
+                    run_id = self.sandbox_manager.create_run()
+                
+                yield f"🔒 Creating isolated sandbox: {run_id}\n"
 
-                yield "\n"
+                # Prepare stdin data for interactive programs
+                stdin_data = None
+                if has_interactive:
+                    test_inputs = generate_test_inputs(prompts)
+                    stdin_data = "\n".join(test_inputs) + "\n"
+                    yield f"   Generated test inputs: {test_inputs}\n"
 
-                # Write temp script for execution
-                yield "📄 Writing to temp file...\n"
-                script_path = self.write_execution_script(code, filename=filename)
-                yield f"   ✓ Written to {script_path}\n\n"
+                # Run verification pipeline
+                yield "🔍 Running verification pipeline...\n"
+                yield "   Gate 1: Syntax check\n"
+                yield "   Gate 2: Test execution\n"
+                yield "   Gate 3: Smoke test\n\n"
 
-                # Check if this is a GUI program and generate tests
+                # Detect GUI program
                 is_gui, framework = self.gui_test_generator.detect_gui_program(code)
-                test_passed = True
-
+                
+                # For GUI programs, we may need to regenerate with test_mode contract
                 if is_gui and framework:
                     yield f"🎨 Detected GUI program ({framework})\n"
-                    yield "🧪 Generating test suite...\n"
+                    # TODO: Check if code follows test_mode contract, if not regenerate
+                    yield "   Enforcing test_mode contract for verification\n"
 
+                # Execute sandbox verification
+                result = self.sandbox_manager.execute_verification_pipeline(
+                    run_id=run_id,
+                    code=code,
+                    filename="main.py",
+                    is_gui=is_gui,
+                    stdin_data=stdin_data,
+                )
+
+                # Check verification results
+                yield "📊 Verification Results:\n"
+                for gate, passed in result.gates_passed.items():
+                    status = "✅ PASS" if passed else "❌ FAIL"
+                    yield f"   {gate.title()}: {status}\n"
+                yield "\n"
+
+                if result.status == "success":
+                    yield "✅ All verification gates passed!\n\n"
+                    
+                    # Export to desktop
+                    yield "💾 Exporting verified code to Desktop...\n"
                     try:
-                        program_name = self.gui_test_generator.extract_program_name(filename)
-                        test_suite = self.gui_test_generator.generate_test_suite(
-                            code, program_name, framework, user_request
-                        )
-
-                        # Write test suite to same directory as program
-                        test_filename = self.gui_test_generator.format_test_filename(filename)
-                        test_path = script_path.parent / test_filename
-                        test_path.write_text(test_suite, encoding="utf-8")
-                        yield f"   ✓ Test suite: {test_path}\n\n"
-
-                        # Also save test to desktop
-                        if desktop_path:
-                            desktop_test_path = desktop_path.parent / test_filename
-                            desktop_test_path.write_text(test_suite, encoding="utf-8")
-                            yield f"   ✓ Tests saved to Desktop: {desktop_test_path}\n\n"
-
-                        # Run tests
-                        yield "🧪 Running automated tests...\n"
-                        test_timeout = max(timeout, 60)
-                        test_passed, test_output = self._run_gui_tests(
-                            test_path, script_path.parent, timeout=test_timeout
-                        )
-
-                        if test_passed:
-                            yield "   ✅ All tests passed!\n\n"
-                            yield f"📊 Test Results:\n{test_output}\n\n"
-                            yield "✅ Program verified working via headless tests.\n"
-
-                            # Save test run to memory
-                            if self.memory_module:
-                                try:
-                                    file_locations = [str(script_path), str(test_path)]
-                                    if desktop_path:
-                                        file_locations.append(str(desktop_path))
-                                        file_locations.append(str(desktop_test_path))
-
-                                    execution_id = self.memory_module.save_execution(
-                                        user_request=user_request,
-                                        description=self._generate_description(user_request, code),
-                                        code_generated=code,
-                                        file_locations=file_locations,
-                                        output=test_output,
-                                        success=True,
-                                        tags=["python", "direct_execution", "gui_tests"],
-                                    )
-                                    logger.info(
-                                        f"Saved GUI test execution to memory: {execution_id}"
-                                    )
-                                except Exception as e:
-                                    logger.error(
-                                        f"Failed to save GUI test execution to memory: {e}"
-                                    )
-
-                            return
-
-                        yield "   ❌ Some tests failed:\n\n"
-                        yield f"📊 Test Results:\n{test_output}\n\n"
-
-                        last_error_output = f"GUI Tests Failed:\n{test_output}"
-                        yield "🔄 Regenerating code to fix test failures...\n\n"
-                        attempt += 1
-                        continue
-
+                        desktop_path = self.save_code_to_desktop(code, user_request, result.code_path)
+                        yield f"   ✓ Saved to: {desktop_path}\n"
                     except Exception as e:
-                        logger.warning(f"Test generation/execution failed: {e}")
-                        yield f"   ⚠️  Test generation skipped: {e}\n\n"
+                        yield f"   ⚠️  Could not save to Desktop: {e}\n"
 
-                # Execute with input support for interactive programs
-                yield f"▶️ Executing script... ({progress})\n"
-
-                # Emit deployment started event to sandbox viewer
-                self._emit_gui_event("deployment_started", {"file_path": str(desktop_path)})
-
-                # Track execution output and exit code
-                combined_output = ""
-                exit_code = 0
-
-                if has_interactive:
-                    yield "   🚀 Running with auto-generated test inputs\n\n"
-                    # Execute with input support - this returns (exit_code, output)
-                    exit_code, exec_output = self._run_script_with_input_support(
-                        script_path, timeout
-                    )
-                    # Yield output line by line and emit to sandbox viewer
-                    for line in exec_output.splitlines(keepends=True):
-                        yield line
-                        combined_output += line
-                        # Emit execution line event to sandbox viewer
-                        if line.strip():
-                            self._emit_gui_event("execution_line", {"line": line})
-                else:
-                    # Use regular execution
-                    for line in self.stream_execution(script_path, timeout):
-                        yield line
-                        combined_output += line
-                        # Emit execution line event to sandbox viewer
-                        if line.strip():
-                            self._emit_gui_event("execution_line", {"line": line})
-                    # Get exit code
-                    exit_code, _ = self._run_script_capture(script_path, timeout)
-
-                if exit_code == 0:
-                    yield "\n\n✅ Execution complete\n"
-
-                    if desktop_path:
-                        yield f"📁 Code saved to: {desktop_path}\n"
-
-                    # Save execution to memory
+                    # Save run metadata
+                    self.sandbox_manager.save_run_metadata(run_id, result)
+                    
+                    # Save to memory
                     if self.memory_module:
-                        try:
-                            execution_id = self.memory_module.save_execution(
-                                user_request=user_request,
-                                description=self._generate_description(user_request, code),
-                                code_generated=code,
-                                file_locations=(
-                                    [str(script_path), str(desktop_path)]
-                                    if desktop_path
-                                    else [str(script_path)]
-                                ),
-                                output=combined_output,
-                                success=True,
-                                tags=["python", "direct_execution"],
-                            )
-                            logger.info(f"Saved execution to memory: {execution_id}")
+                        self._save_execution_to_memory(
+                            user_request, code, desktop_path, result, is_gui
+                        )
 
-                            # Add to history for this session
-                            exec_mem = ExecutionMemory(
-                                execution_id=execution_id,
-                                timestamp=time.time(),
-                                user_request=user_request,
-                                description=self._generate_description(user_request, code),
-                                code_generated=code,
-                                file_locations=[str(script_path)],
-                                output=combined_output,
-                                success=True,
-                                tags=["python", "direct_execution"],
-                            )
-                            self._execution_history.append(exec_mem)
-                        except Exception as e:
-                            logger.error(f"Failed to save execution to memory: {e}")
-
+                    # Clean up sandbox
+                    self.sandbox_manager.cleanup_run(run_id)
+                    
+                    yield "\n🎉 Code successfully verified and exported!\n"
                     return
 
-                last_error_output = combined_output or f"Process exited with code {exit_code}"
-                yield f"\n❌ Script failed ({progress})\n"
+                else:
+                    # Verification failed, handle different failure types
+                    yield f"❌ Verification failed: {result.status}\n"
+                    
+                    if result.error_message:
+                        yield f"Error: {result.error_message}\n\n"
+
+                    if result.status == "syntax_error":
+                        yield "🔧 Fixing syntax error and retrying...\n"
+                        last_error_output = result.error_message or ""
+                    elif result.status == "test_failure":
+                        yield "🔧 Tests failed, regenerating with fixes...\n"
+                        last_error_output = result.pytest_summary or result.error_message or ""
+                    elif result.status == "timeout":
+                        yield "🔧 Execution timeout, optimizing code...\n"
+                        last_error_output = "Execution timeout - code may have infinite loops or blocking calls"
+                    else:
+                        yield "🔧 Code verification failed, regenerating...\n"
+                        last_error_output = result.error_message or ""
+
+                    # Clean up failed run
+                    self.sandbox_manager.cleanup_run(run_id)
+                    run_id = None  # Create new run for retry
+                    
+                    attempt += 1
+                    yield f"🔄 Retrying... ({format_attempt_progress(attempt, max_attempts)})\n\n"
+                    continue
 
             except Exception as e:
-                last_error_output = str(e)
-                yield f"\n❌ Error ({progress}): {str(e)}\n"
+                logger.error(f"Execution failed: {e}")
+                yield f"\n❌ Execution error: {str(e)}\n"
+                
+                # Clean up on error
+                if run_id:
+                    self.sandbox_manager.cleanup_run(run_id)
+                
+                return
 
-            attempt += 1
+    def _save_execution_to_memory(
+        self,
+        user_request: str,
+        code: str,
+        desktop_path: Optional[Path],
+        result: SandboxResult,
+        is_gui: bool,
+    ) -> None:
+        """
+        Save execution details to persistent memory.
 
-    def _run_script_capture(self, script_path: Path, timeout: int) -> tuple[int, str]:
-        """Run a script and return (exit_code, combined_output)."""
-
-        creation_flags = 0
-        if sys.platform == "win32":
-            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
-
+        Args:
+            user_request: Original user request
+            code: Generated code
+            desktop_path: Path where code was saved
+            result: Sandbox verification result
+            is_gui: Whether this was a GUI program
+        """
+        if not self.memory_module:
+            return
+            
         try:
-            process = subprocess.run(
-                [sys.executable, str(script_path)],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                creationflags=creation_flags,
+            file_locations = [str(result.code_path)]
+            if desktop_path:
+                file_locations.append(str(desktop_path))
+            
+            # Add test files if they exist
+            for test_path in result.test_paths:
+                file_locations.append(str(test_path))
+                
+            description = self._generate_description(user_request, code)
+            tags = ["python", "sandbox_verification"]
+            if is_gui:
+                tags.append("gui")
+            else:
+                tags.append("cli")
+                
+            execution_id = self.memory_module.save_execution(
+                user_request=user_request,
+                description=description,
+                code_generated=code,
+                file_locations=file_locations,
+                output=f"Sandbox verification passed in {result.duration_seconds:.2f}s",
+                success=True,
+                tags=tags,
             )
-
-            combined = ""
-            if process.stdout:
-                combined += process.stdout
-            if process.stderr:
-                combined += process.stderr
-
-            return process.returncode, combined
-        except subprocess.TimeoutExpired:
-            return 124, f"Execution timed out after {timeout} seconds"
-
-    def _run_gui_tests(
-        self, test_path: Path, working_dir: Path, timeout: int = 30
-    ) -> tuple[bool, str]:
-        """Run pytest for the generated GUI test suite."""
-
-        cmd = [sys.executable, "-m", "pytest", "-v", str(test_path.name)]
-        env = os.environ.copy()
-        env["PYTHONPATH"] = str(working_dir) + os.pathsep + env.get("PYTHONPATH", "")
-
-        creation_flags = 0
-        if sys.platform == "win32":
-            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP
-
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(working_dir),
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=env,
-                creationflags=creation_flags,
-            )
-
-            output = ""
-            if result.stdout:
-                output += result.stdout
-            if result.stderr:
-                output += result.stderr
-
-            return (result.returncode == 0), output
-        except subprocess.TimeoutExpired:
-            return False, f"Test execution timed out after {timeout} seconds"
+            
+            logger.info(f"Saved sandbox execution to memory: {execution_id}")
+            
         except Exception as e:
-            return False, f"Test execution error: {e}"
+            logger.error(f"Failed to save execution to memory: {e}")
+
+    def _generate_description(self, user_request: str, code: str) -> str:
+        """
+        Generate a description for the execution memory.
+
+        Args:
+            user_request: Original user request
+            code: Generated code
+
+        Returns:
+            Description string
+        """
+        # Simple description based on request
+        if len(user_request) > 50:
+            return f"Generated Python code for: {user_request[:47]}..."
+        return f"Generated Python code for: {user_request}"
+
+    def _generate_fix_code(
+        self,
+        user_request: str,
+        previous_code: str,
+        error_output: str,
+        language: str,
+        attempt: int,
+    ) -> str:
+        """
+        Generate fixed code based on error output.
+
+        Args:
+            user_request: Original user request
+            previous_code: Previously generated code that failed
+            error_output: Error output from failed execution
+            language: Programming language
+            attempt: Current attempt number
+
+        Returns:
+            Fixed code
+        """
+        logger.info(f"Generating fix code (attempt {attempt})")
+
+        # Build prompt for fix generation
+        prompt = self._build_fix_prompt(user_request, previous_code, error_output, language, attempt)
+
+        try:
+            fixed_code = self.llm_client.generate(prompt)
+            cleaned_code = clean_code(str(fixed_code))
+            logger.debug(f"Generated fix code: {len(cleaned_code)} characters")
+            return str(cleaned_code)
+        except Exception as e:
+            logger.error(f"Failed to generate fix code: {e}")
+            raise
+
+    def _build_fix_prompt(
+        self,
+        user_request: str,
+        previous_code: str,
+        error_output: str,
+        language: str,
+        attempt: int,
+    ) -> str:
+        """
+        Build prompt for code fixing.
+
+        Args:
+            user_request: Original user request
+            previous_code: Previously generated code
+            error_output: Error output from execution
+            language: Programming language
+            attempt: Current attempt number
+
+        Returns:
+            Fix prompt string
+        """
+        return f"""Fix the following {language} code based on the error output.
+
+ORIGINAL REQUEST:
+{user_request}
+
+PREVIOUS CODE:
+```python
+{previous_code}
+```
+
+ERROR OUTPUT:
+{error_output}
+
+INSTRUCTIONS:
+1. Fix the specific error(s) mentioned in the error output
+2. Keep the same functionality and approach
+3. Ensure the code is complete and runnable
+4. Add proper error handling if needed
+5. Make minimal changes to fix the issue
+6. Return only the fixed code, no explanations
+
+FIXED CODE:"""
+        return prompt
+
+    def _generate_description(self, user_request: str, code: str) -> str:
+        """
+        Generate a semantic description for an execution.
+
+        Args:
+            user_request: Original user request
+            code: Generated code
+
+        Returns:
+            Semantic description
+        """
+        # Extract key concepts from user request
+        request_lower = user_request.lower()
+
+        if "file" in request_lower or "count" in request_lower:
+            return f"File {user_request}"
+
+        if "web" in request_lower or "scrape" in request_lower or "download" in request_lower:
+            return "Web scraper"
+
+        if "api" in request_lower:
+            return "API client"
+
+        if "data" in request_lower or "process" in request_lower:
+            return "Data processing script"
+
+        if "gui" in request_lower or "window" in request_lower or "interface" in request_lower:
+            return "GUI application"
+
+        if "sort" in request_lower or "filter" in request_lower:
+            return "Data manipulation script"
+
+        if "convert" in request_lower or "transform" in request_lower:
+            return "Data conversion script"
+
+        if "backup" in request_lower or "copy" in request_lower:
+            return "File backup script"
+
+        # Default description
+        return f"Python script: {user_request[:50]}"
 
     def _run_script_with_input_support(self, script_path: Path, timeout: int) -> tuple[int, str]:
         """

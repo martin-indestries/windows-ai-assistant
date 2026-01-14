@@ -7,6 +7,7 @@ customtkinter>=5.0
 requests>=2.28.0
 pyautogui>=0.9.53
 psutil>=5.9.0
+pytest>=7.0.0
 
 # Optional dependencies for system actions
 # Uncomment as needed:

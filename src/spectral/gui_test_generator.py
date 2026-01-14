@@ -2,7 +2,7 @@
 GUI Test Generator module for automated testing of GUI programs.
 
 Detects GUI programs and generates test suites that verify functionality
-without visual inspection.
+without visual inspection using the test_mode contract for Tkinter/CustomTkinter.
 """
 
 import logging
@@ -101,6 +101,48 @@ class GUITestGenerator:
         self, code: str, program_name: str, framework: str, user_request: str
     ) -> str:
         """Build prompt for test generation."""
+        
+        # Add test_mode contract enforcement for Tkinter/CustomTkinter
+        test_mode_requirements = ""
+        if framework in ["tkinter", "customtkinter"]:
+            test_mode_requirements = '''
+CRITICAL TEST_MODE CONTRACT (Tkinter/CustomTkinter only):
+The GUI program MUST follow this exact pattern:
+
+def create_app(test_mode: bool = False):
+    """
+    Create and return the GUI application.
+    
+    Args:
+        test_mode: If True, build widget tree but do NOT call mainloop().
+                   Return root window + dict of key widgets for testing.
+    
+    Returns:
+        If test_mode=True: (root, widgets_dict)
+        If test_mode=False: None (app runs mainloop())
+    """
+    root = ctk.CTk()  # or tk.Tk() for tkinter
+    
+    # Build UI...
+    button = ctk.CTkButton(root, text="Click me", command=on_button_click)
+    label = ctk.CTkLabel(root, text="Hello")
+    
+    if test_mode:
+        return root, {"button": button, "label": label}
+    else:
+        root.mainloop()
+        return None
+
+def main():
+    """Entry point for normal execution."""
+    create_app(test_mode=False)
+
+if __name__ == "__main__":
+    main()
+
+If the current code doesn't follow this pattern, regenerate it to follow this exact structure.
+'''
+
         prompt = f"""Generate a pytest test suite for this GUI program.
 
 ORIGINAL REQUEST:
@@ -114,6 +156,8 @@ PROGRAM CODE:
 PROGRAM NAME: {program_name}.py
 FRAMEWORK: {framework}
 
+{test_mode_requirements}
+
 REQUIREMENTS:
 1. Create file: test_{program_name}.py
 2. Use pytest and unittest for testing
@@ -122,7 +166,7 @@ REQUIREMENTS:
 
 TEST CATEGORIES:
 1. Initialization Tests
-   - Verify program/class can be instantiated
+   - Verify program/class can be instantiated with test_mode=True
    - Check required attributes exist
    - Verify initial state is correct
 
@@ -132,7 +176,7 @@ TEST CATEGORIES:
    - Ensure elements are properly configured
 
 3. Interaction Tests
-   - Simulate user interactions (clicks, keyboard input)
+   - Simulate user interactions (clicks, keyboard input) by calling handlers directly
    - Verify event handlers are connected
    - Check that interactions trigger expected behavior
 
@@ -147,64 +191,69 @@ TEST CATEGORIES:
    - Verify no memory leaks or infinite loops
 
 TESTING STRATEGIES:
-- Mock Tk mainloop() to prevent GUI from actually showing
+- For Tkinter/CustomTkinter: Always call create_app(test_mode=True) and use returned widgets
 - Test methods directly without running mainloop
 - Use unittest.mock to patch GUI display functions
 - Check object attributes instead of visual output
 - Verify internal state, not rendered pixels
+- ALWAYS call root.destroy() in finally blocks to clean up
 
-EXAMPLE STRUCTURE:
+EXAMPLE STRUCTURE (Tkinter/CustomTkinter):
 ```python
 import pytest
 import unittest
 from unittest.mock import Mock, patch
-from {program_name} import *
+from {program_name} import create_app
 
 class Test{program_name.title().replace('_', '')}:
     
-    @patch('tkinter.Tk.mainloop')
-    def test_initialization(self, mock_mainloop):
-        '''Test program initializes without errors'''
-        app = MainClass()
-        assert app is not None
+    def test_initialization(self):
+        '''Test program initializes with test_mode=True'''
+        root, widgets = create_app(test_mode=True)
+        try:
+            assert root is not None
+            assert widgets is not None
+            assert "button" in widgets
+            assert "label" in widgets
+        finally:
+            root.destroy()
         
-    def test_elements_created(self):
+    def test_button_exists(self):
         '''Test UI elements are created'''
-        app = MainClass()
-        assert hasattr(app, 'button')
-        assert hasattr(app, 'canvas')
-        
-    def test_interaction_handler(self):
+        root, widgets = create_app(test_mode=True)
+        try:
+            button = widgets["button"]
+            assert button is not None
+            assert button.cget("text") == "Click me"
+        finally:
+            root.destroy()
+            
+    def test_button_callback(self):
         '''Test click handlers work'''
-        app = MainClass()
-        original_state = app.state
-        app.on_click()
-        assert app.state != original_state
-        
-    def test_randomization(self):
-        '''Test variety in random behavior'''
-        app = MainClass()
-        results = set()
-        for _ in range(10):
-            app.generate_random()
-            results.add(app.current_value)
-        assert len(results) > 1
-        
-    def test_stability(self):
-        '''Test repeated use doesn't crash'''
-        app = MainClass()
-        for _ in range(20):
-            app.interact()
-        assert True
+        root, widgets = create_app(test_mode=True)
+        try:
+            # Get original label text
+            original_text = widgets["label"].cget("text")
+            
+            # Simulate button click by calling callback directly
+            on_button_click()
+            
+            # Verify state change
+            new_text = widgets["label"].cget("text")
+            assert new_text != original_text
+        finally:
+            root.destroy()
 ```
 
 Generate COMPLETE test suite with:
 - All necessary imports
 - Proper mocking to prevent GUI windows
+- For Tkinter/CustomTkinter: Always use create_app(test_mode=True)
 - 5-10 meaningful tests
 - Clear test names
 - Assertions that verify functionality
 - No visual/screenshot requirements
+- Always clean up with root.destroy() in finally blocks
 
 Return only Python code, no explanations."""
         return prompt

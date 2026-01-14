@@ -200,21 +200,23 @@ class IntentClassifier:
         }
 
         # Chat patterns (questions, greetings, conversational phrases)
+        # Use \b word boundaries to prevent partial matches
         self.chat_patterns = [
-            r"^(how|what|why|when|where|who|which|can you|"
-            r"could you|would you|will you|are you|is it)",
-            r"^(explain|describe|summarize|help me|show me|let me know)",
-            r"(how are you|what's up|how do you feel|what do you think)",
-            r"(thank you|thanks|sorry|excuse me)",
-            r"(hello|hi|hey|good morning|good afternoon|good evening|bye|goodbye)",
-            r"tell me (a )?(joke|story|about|how)",
-            r"what('s| is) your (name|purpose|role)",
-            r"how can (you|i)",
+            r"\b(how|what|why|when|where|who|which)\b",
+            r"\b(can you|could you|would you|will you|are you|is it)\b",
+            r"\b(explain|describe|summarize|help me|show me|let me know)\b",
+            r"\b(how are you|what's up|how do you feel|what do you think|what are you doing)\b",
+            r"\b(thank you|thanks|sorry|excuse me)\b",
+            r"\b(hello|hi|hey|good morning|good afternoon|good evening|bye|goodbye)\b",
+            r"\btell me (a )?(joke|story|about|how)\b",
+            r"\bwhat('s| is) your (name|purpose|role)\b",
+            r"\bhow can (you|i|help)\b",
             r"\?$",  # Ends with question mark
         ]
 
         # Compile regex patterns
-        self.chat_regex_patterns = [
+        # All chat patterns use search now since we added \b word boundaries
+        self.chat_search_patterns = [
             re.compile(pattern, re.IGNORECASE) for pattern in self.chat_patterns
         ]
 
@@ -234,8 +236,8 @@ class IntentClassifier:
         words = input_lower.split()
 
         # Check for chat patterns first (higher priority)
-        for pattern in self.chat_regex_patterns:
-            if pattern.match(input_lower):
+        for pattern in self.chat_search_patterns:
+            if pattern.search(input_lower):
                 logger.debug(f"Chat pattern matched: {pattern.pattern}")
                 return IntentType.CHAT, 0.9
 
@@ -284,7 +286,7 @@ class IntentClassifier:
 
         # Simple keyword-based classification as fallback
         action_like = any(word in self.action_verbs for word in input_lower.split()[:3])
-        chat_like = any(pattern.search(input_lower) for pattern in self.chat_regex_patterns)
+        chat_like = any(pattern.search(input_lower) for pattern in self.chat_search_patterns)
 
         if action_like and not chat_like:
             return IntentType.ACTION, 0.6

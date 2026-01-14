@@ -1,0 +1,8 @@
+Command: python -c raise Exception('Test error')
+Working directory: .
+Started at: 2026-01-14 03:12:26
+==================================================
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+Exception: Test error

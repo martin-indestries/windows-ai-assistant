@@ -478,9 +478,43 @@ class ChatSession:
         """
         logger.info(f"Processing user input in chat: {user_input}")
 
+        # Check intent first - handle casual conversation immediately
+        intent = self.intent_classifier.classify_intent(user_input)
+        logger.debug(f"Classified intent as: {intent}")
+
+        # If this is casual conversation, generate response directly without execution
+        if intent == "casual":
+            logger.debug("Casual conversation detected, using direct response generation")
+            response: str = self.response_generator.generate_response(
+                intent="casual", execution_result="", original_input=user_input
+            )
+
+            # Build context from memory for casual responses
+            memory_context = self._build_context_from_memory(user_input)
+
+            # If we have memory context, append it to the response
+            if memory_context:
+                response = f"{response}\n\n{memory_context}"
+
+            # Add to history
+            context = self.get_context_summary()
+            self.add_message("user", user_input, metadata={"context": context, "intent": intent})
+            self.add_message(
+                "assistant", response, metadata={"intent": intent, "skip_execution": True}
+            )
+
+            # Save conversation to memory
+            self._save_to_memory(
+                user_message=user_input,
+                assistant_response=response,
+                execution_history=[],
+            )
+
+            return response
+
         # Add user message to history
         context = self.get_context_summary()
-        self.add_message("user", user_input, metadata={"context": context})
+        self.add_message("user", user_input, metadata={"context": context, "intent": intent})
 
         try:
             # Generate plan if reasoning module is available
@@ -541,6 +575,41 @@ class ChatSession:
 
         """
         logger.info(f"Processing user input with streaming: {user_input}")
+
+        # Check intent first - handle casual conversation immediately
+        intent = self.intent_classifier.classify_intent(user_input)
+        logger.debug(f"Classified intent as: {intent}")
+
+        # If this is casual conversation, generate response directly without execution
+        if intent == "casual":
+            logger.debug("Casual conversation detected, using direct response generation")
+            response: str = self.response_generator.generate_response(
+                intent="casual", execution_result="", original_input=user_input
+            )
+
+            # Build context from memory for casual responses
+            memory_context = self._build_context_from_memory(user_input)
+
+            # If we have memory context, append it to the response
+            if memory_context:
+                response = f"{response}\n\n{memory_context}"
+
+            # Add to history and return
+            context = self.get_context_summary()
+            self.add_message("user", user_input, metadata={"context": context, "intent": intent})
+            self.add_message(
+                "assistant", response, metadata={"intent": intent, "skip_execution": True}
+            )
+
+            # Save conversation to memory
+            self._save_to_memory(
+                user_message=user_input,
+                assistant_response=response,
+                execution_history=[],
+            )
+
+            yield response
+            return
 
         max_attempts = parse_retry_limit(user_input)
 

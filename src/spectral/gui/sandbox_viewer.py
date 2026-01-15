@@ -10,6 +10,7 @@ Integrates:
 """
 
 import logging
+from typing import Optional
 
 import customtkinter as ctk
 
@@ -54,6 +55,7 @@ class SandboxViewer(ctk.CTkFrame):
         # State tracking
         self.is_visible = True
         self.test_id_map: dict[str, str] = {}  # Map test names to viewer test IDs
+        self.current_request_id: Optional[str] = None
 
         # Timer for elapsed time
         self.timer_running = False
@@ -192,22 +194,47 @@ class SandboxViewer(ctk.CTkFrame):
         self.execution_console.log_info("Code generation started...")
         self.status_panel.start_timer()
 
+        # Extract request_id if available
+        request_id = data.get("request_id")
+        if request_id:
+            self.current_request_id = request_id
+            from datetime import datetime
+            self.code_editor.set_metadata(request_id, timestamp=datetime.now().strftime("%H:%M:%S"))
+
     def _on_code_chunk_generated(self, data: dict) -> None:
         """Handle code chunk generated (for streaming)."""
         chunk = data.get("chunk", "")
         if chunk:
+            # Append code with highlight
             self.code_editor.append_code(chunk)
+            # Highlight the new chunk
+            self.code_editor.highlight_last_chunk(chunk)
 
     def _on_code_generated(self, data: dict) -> None:
         """Handle code generated."""
         code = data.get("code", "")
         if code:
-            self.code_editor.set_code(code)
+            # Remove chunk highlights when final code is set
+            self.code_editor.dehighlight_last_chunk()
+
+            # Update file path if available
+            file_path = data.get("file_path")
+            request_id = data.get("request_id", self.current_request_id or "unknown")
+
+            if file_path:
+                from datetime import datetime
+                self.code_editor.set_metadata(
+                    request_id,
+                    timestamp=datetime.now().strftime("%H:%M:%S"),
+                    file_path=file_path
+                )
+
             line_count = len(code.split("\n"))
             self.execution_console.log_info(f"Code generated ({line_count} lines)")
 
     def _on_code_generation_complete(self, data: dict) -> None:
         """Handle code generation complete."""
+        self.code_editor.dehighlight_last_chunk()
         self.execution_console.log_info("Code generation complete")
 
     def _on_sandbox_created(self, data: dict) -> None:

@@ -23,7 +23,7 @@ from spectral.llm_client import LLMClient
 from spectral.mistake_learner import MistakeLearner
 from spectral.output_validator import OutputValidator
 from spectral.program_deployer import ProgramDeployer
-from spectral.sandbox_manager import SandboxManager, SandboxState
+from spectral.sandbox_manager import SandboxRunManager, SandboxResult
 from spectral.test_case_generator import TestCaseGenerator
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,7 @@ class SandboxExecutionSystem:
         self.mistake_learner = mistake_learner or MistakeLearner()
 
         # Initialize components
-        self.sandbox_manager = SandboxManager()
+        self.sandbox_manager = SandboxRunManager()
         self.program_analyzer = InteractiveProgramAnalyzer()
         self.test_generator = TestCaseGenerator()
         self.interactive_executor = InteractiveExecutor()

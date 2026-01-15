@@ -5,6 +5,8 @@ Live code editor panel for real-time code viewing with syntax highlighting.
 import logging
 import re
 import tkinter as tk
+from pathlib import Path
+from typing import Optional
 
 import customtkinter as ctk
 
@@ -29,6 +31,10 @@ class LiveCodeEditor(ctk.CTkFrame):
     NUMBER_COLOR = "#BD93F9"  # Purple for numbers
     FUNCTION_COLOR = "#50FA7B"  # Green for functions
     DEFAULT_COLOR = "#F8F8F2"  # White-ish for default text
+
+    # Highlighting colors for real-time streaming
+    NEW_CHUNK_COLOR = "#FFB86C"  # Orange for newly written code (current chunk)
+    METADATA_COLOR = "#8BE9FD"  # Cyan for metadata (request ID, timestamp, etc.)
 
     # Python keywords to highlight
     KEYWORDS = {
@@ -92,6 +98,12 @@ class LiveCodeEditor(ctk.CTkFrame):
         self.title_label = ctk.CTkLabel(self, text="📝 GENERATED CODE", font=("Arial", 12, "bold"))
         self.title_label.pack(pady=(5, 0), padx=10, anchor="w")
 
+        # Metadata label (request ID, timestamp, file path)
+        self.metadata_label = ctk.CTkLabel(
+            self, text="", font=("Arial", 9), text_color="#8BE9FD"
+        )
+        self.metadata_label.pack(pady=(0, 2), padx=10, anchor="w")
+
         # Code count label
         self.count_label = ctk.CTkLabel(
             self, text="0 lines | 0 chars", font=("Arial", 10), text_color="gray"
@@ -131,11 +143,78 @@ class LiveCodeEditor(ctk.CTkFrame):
         self.code_text.tag_config("comment", foreground=self.COMMENT_COLOR)
         self.code_text.tag_config("number", foreground=self.NUMBER_COLOR)
         self.code_text.tag_config("function", foreground=self.FUNCTION_COLOR)
+        self.code_text.tag_config("new_chunk", foreground=self.NEW_CHUNK_COLOR)
+        self.code_text.tag_config("metadata", foreground=self.METADATA_COLOR)
 
     def clear(self) -> None:
         """Clear the code editor."""
         self.code_text.delete("1.0", "end")
+        self.metadata_label.configure(text="")
         self._update_count()
+
+    def set_metadata(
+        self,
+        request_id: str,
+        timestamp: Optional[str] = None,
+        file_path: Optional[str] = None
+    ) -> None:
+        """
+        Set metadata information (request ID, timestamp, file path).
+
+        Args:
+            request_id: Request ID string
+            timestamp: Optional timestamp string
+            file_path: Optional file path string
+        """
+        from datetime import datetime
+
+        if timestamp is None:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+
+        metadata_text = f"📋 {request_id}"
+        if file_path:
+            # Shorten the path for display
+            short_path = file_path.replace(str(Path.home()), "~")
+            metadata_text += f" | 📁 {short_path}"
+
+        metadata_text += f" | 🕐 {timestamp}"
+        self.metadata_label.configure(text=metadata_text)
+
+    def highlight_last_chunk(self, chunk: str) -> None:
+        """
+        Highlight the last chunk of text that was added.
+
+        Args:
+            chunk: The chunk that was just added
+        """
+        # Calculate the length of the chunk
+        chunk_length = len(chunk)
+
+        # Get the end position
+        end_pos = self.code_text.index("end-1c")
+
+        # Calculate start position (going backwards)
+        start_line, start_col = end_pos.split(".")
+        start_col_int = int(start_col) - chunk_length
+
+        # Handle wrapping across lines
+        if start_col_int < 0:
+            # Simple approach: tag the last line
+            end_line = int(start_line)
+            start_line = str(end_line)
+            start_pos = f"{start_line}.0"
+        else:
+            start_pos = f"{start_line}.{start_col_int}"
+
+        # Apply the new_chunk tag
+        try:
+            self.code_text.tag_add("new_chunk", start_pos, end_pos)
+        except Exception as e:
+            logger.debug(f"Could not highlight last chunk: {e}")
+
+    def dehighlight_last_chunk(self) -> None:
+        """Remove the highlight from the last chunk."""
+        self.code_text.tag_remove("new_chunk", "1.0", "end")
 
     def set_code(self, text: str) -> None:
         """

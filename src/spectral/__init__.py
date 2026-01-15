@@ -34,8 +34,8 @@ from spectral.orchestrator import Orchestrator
 from spectral.output_validator import OutputValidator
 from spectral.program_deployer import ProgramDeployer
 from spectral.reasoning import Plan, PlanStep, ReasoningModule, SafetyFlag, StepStatus
-from spectral.sandbox_execution_system import SandboxExecutionSystem
-from spectral.sandbox_manager import SandboxInfo, SandboxManager, SandboxState
+# from spectral.sandbox_execution_system import SandboxExecutionSystem  # Disabled - using new SandboxRunManager
+from spectral.sandbox_manager import SandboxRunManager, SandboxResult
 from spectral.system_actions import SystemActionRouter
 from spectral.test_case_generator import TestCaseGenerator
 from spectral.tool_teaching import ToolTeachingModule
@@ -85,10 +85,8 @@ __all__ = [
     "ReasoningModule",
     "RetrievalResult",
     "SafetyConfig",
-    "SandboxExecutionSystem",
-    "SandboxInfo",
-    "SandboxManager",
-    "SandboxState",
+    "SandboxRunManager",
+    "SandboxResult",
     "SafetyFlag",
     "StepOutcome",
     "StepStatus",

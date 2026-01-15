@@ -17,6 +17,10 @@ dependencies = [
     "requests>=2.28.0",
     "pyautogui>=0.9.53",
     "psutil>=5.9.0",
+    "beautifulsoup4>=4.11.0",
+    "lxml>=4.9.0",
+    "readability-lxml>=0.8.1",
+    "playwright>=1.40.0",
 ]
 
 [project.optional-dependencies]

@@ -16,6 +16,8 @@ class ExecutionMode(str, Enum):
 
     DIRECT = "direct"
     PLANNING = "planning"
+    RESEARCH = "research"
+    RESEARCH_AND_ACT = "research_and_act"
 
 
 class CodeStep(BaseModel):

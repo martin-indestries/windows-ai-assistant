@@ -14,6 +14,8 @@ from typing import Any, Dict, Generator, List, Optional
 from spectral.config import JarvisConfig
 from spectral.controller import Controller
 from spectral.conversation_context import ConversationContext
+from spectral.execution_models import ExecutionMode
+from spectral.execution_router import ExecutionRouter
 from spectral.intent_classifier import IntentClassifier
 from spectral.memory_models import ExecutionMemory
 from spectral.memory_reference_resolver import ReferenceResolver
@@ -21,6 +23,7 @@ from spectral.memory_search import MemorySearch
 from spectral.orchestrator import Orchestrator
 from spectral.persistent_memory import MemoryModule
 from spectral.reasoning import Plan, ReasoningModule
+from spectral.research_intent_handler import ResearchIntentHandler
 from spectral.response_generator import ResponseGenerator
 from spectral.retry_parsing import parse_retry_limit
 
@@ -122,6 +125,10 @@ class ChatSession:
         else:
             self.memory_search = None
             self.reference_resolver = None
+
+        # Initialize research handler and execution router
+        self.research_handler = ResearchIntentHandler()
+        self.execution_router = ExecutionRouter()
 
     def add_message(
         self,
@@ -576,7 +583,45 @@ class ChatSession:
         """
         logger.info(f"Processing user input with streaming: {user_input}")
 
-        # Check intent first - handle casual conversation immediately
+        # Check for research intent first
+        mode, confidence = self.execution_router.classify(user_input)
+        logger.debug(f"Execution mode classified as: {mode} with confidence {confidence:.2f}")
+
+        # Handle research intents
+        if mode in [ExecutionMode.RESEARCH, ExecutionMode.RESEARCH_AND_ACT] and confidence >= 0.6:
+            logger.info(f"Research intent detected: {mode}")
+            yield f"\n🔍 Researching: {user_input}\n\n"
+
+            try:
+                research_response, pack = self.research_handler.handle_research_query(user_input)
+
+                # Add to history
+                context = self.get_context_summary()
+                self.add_message(
+                    "user", user_input, metadata={"context": context, "mode": mode.value}
+                )
+                self.add_message(
+                    "assistant",
+                    research_response,
+                    metadata={"mode": mode.value, "pack": pack.to_dict() if pack else None},
+                )
+
+                # Save to memory
+                self._save_to_memory(
+                    user_message=user_input,
+                    assistant_response=research_response,
+                    execution_history=[],
+                )
+
+                yield research_response
+                return
+
+            except Exception as e:
+                logger.error(f"Research failed: {e}")
+                error_msg = f"Research failed: {str(e)}\n\nFalling back to regular processing..."
+                yield error_msg
+
+        # Check intent for casual conversation
         intent = self.intent_classifier.classify_intent(user_input)
         logger.debug(f"Classified intent as: {intent}")
 

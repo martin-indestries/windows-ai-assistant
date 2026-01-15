@@ -1,8 +1,8 @@
 """
 Execution router module for dual execution mode.
 
-Classifies incoming requests as DIRECT or PLANNING mode based on
-complexity and intent.
+Classifies incoming requests as DIRECT, PLANNING, RESEARCH, or RESEARCH_AND_ACT
+based on complexity and intent.
 """
 
 import logging
@@ -19,6 +19,8 @@ class ExecutionRouter:
 
     DIRECT mode: Simple code gen/execution requests
     PLANNING mode: Complex multi-step requests requiring structured planning
+    RESEARCH mode: Information gathering from the web
+    RESEARCH_AND_ACT mode: Research then execute based on findings
     """
 
     def __init__(self) -> None:
@@ -89,11 +91,36 @@ class ExecutionRouter:
             "service",
         }
 
+        # Research keywords (information gathering)
+        self.research_keywords = {
+            "how do i",
+            "how to",
+            "what is",
+            "what does",
+            "does it support",
+            "can i",
+            "install",
+            "set up",
+            "configure",
+            "error",
+            "problem",
+            "issue",
+            "troubleshoot",
+            "fix",
+            "solve",
+            "find out",
+            "learn",
+            "understand",
+            "explain",
+            "guide",
+            "tutorial",
+        }
+
         logger.info("ExecutionRouter initialized")
 
     def classify(self, user_input: str) -> Tuple[ExecutionMode, float]:
         """
-        Classify user input as DIRECT or PLANNING mode.
+        Classify user input into execution mode.
 
         Args:
             user_input: User's natural language request
@@ -109,6 +136,24 @@ class ExecutionRouter:
         # Count indicators for each mode
         direct_score = 0.0
         planning_score = 0.0
+        research_score = 0.0
+
+        # Check for research patterns (strong signals)
+        for pattern in self.research_keywords:
+            if pattern in input_lower:
+                research_score += 0.8
+
+        # Questions are usually research
+        if input_lower.startswith(("how", "what", "why", "when", "where", "can", "does", "is")):
+            research_score += 0.6
+
+        # Question marks also indicate research
+        if "?" in input_lower:
+            research_score += 0.3
+
+        # Error messages suggest research
+        if any(word in input_lower for word in ["error", "failed", "exception", "traceback"]):
+            research_score += 0.6
 
         # Check for direct mode keywords
         direct_keyword_count = sum(1 for word in words if word in self.direct_keywords)
@@ -137,11 +182,21 @@ class ExecutionRouter:
 
         # Determine mode based on scores
         confidence = 0.0
-        if planning_score > direct_score:
+
+        # If research score is high, decide between RESEARCH and RESEARCH_AND_ACT
+        if research_score >= 0.9:
+            # If also has action keywords, use RESEARCH_AND_ACT
+            has_action_intent = direct_score > 0.5 or planning_score > 0.5
+            if has_action_intent:
+                mode = ExecutionMode.RESEARCH_AND_ACT
+                confidence = min(0.95, 0.6 + research_score * 0.2)
+            else:
+                mode = ExecutionMode.RESEARCH
+                confidence = min(0.95, 0.6 + research_score * 0.2)
+        elif planning_score > direct_score and planning_score > research_score:
             mode = ExecutionMode.PLANNING
-            # Normalize confidence (max expected score ~2.5)
             confidence = min(0.95, 0.5 + (planning_score - direct_score) * 0.3)
-        elif direct_score > planning_score:
+        elif direct_score > planning_score and direct_score > research_score:
             mode = ExecutionMode.DIRECT
             confidence = min(0.95, 0.5 + (direct_score - planning_score) * 0.3)
         else:
@@ -150,7 +205,10 @@ class ExecutionRouter:
             confidence = 0.5
 
         logger.info(f"Classified as {mode.value} mode with confidence {confidence:.2f}")
-        logger.debug(f"Scores - Direct: {direct_score:.2f}, Planning: {planning_score:.2f}")
+        logger.debug(
+            f"Scores - Direct: {direct_score:.2f}, Planning: {planning_score:.2f}, "
+            f"Research: {research_score:.2f}"
+        )
 
         return mode, confidence
 

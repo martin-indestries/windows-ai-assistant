@@ -16,6 +16,7 @@ from spectral.chat import ChatSession
 from spectral.config import JarvisConfig
 from spectral.gui.sandbox_viewer import SandboxViewer
 from spectral.intent_classifier import IntentClassifier
+from spectral.llm_client import LLMClient
 from spectral.orchestrator import Orchestrator
 from spectral.persistent_memory import MemoryModule
 from spectral.reasoning import ReasoningModule
@@ -61,7 +62,17 @@ class GUIApp(customtkinter.CTk):
 
         # Initialize intent classifier and response generator
         self.intent_classifier = IntentClassifier()
-        self.response_generator = ResponseGenerator()
+
+        llm_client = None
+        try:
+            llm_client = LLMClient(self.config.llm)
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize LLM client; falling back to template responses: %s",
+                e,
+            )
+
+        self.response_generator = ResponseGenerator(llm_client=llm_client)
 
         # Create chat session
         self.chat_session = ChatSession(

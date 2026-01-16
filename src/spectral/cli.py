@@ -13,6 +13,7 @@ from typing import Optional
 from spectral.chat import ChatSession
 from spectral.container import Container
 from spectral.intent_classifier import IntentClassifier
+from spectral.llm_client import LLMClient
 from spectral.response_generator import ResponseGenerator
 
 logger = logging.getLogger(__name__)
@@ -209,7 +210,17 @@ def main(argv: Optional[list] = None) -> int:
 
         # Initialize intent classifier and response generator for conversational responses
         intent_classifier = IntentClassifier()
-        response_generator = ResponseGenerator()
+
+        llm_client = None
+        try:
+            llm_client = LLMClient(config.llm)
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize LLM client; falling back to template responses: %s",
+                e,
+            )
+
+        response_generator = ResponseGenerator(llm_client=llm_client)
 
         chat_session = ChatSession(
             orchestrator=orchestrator,

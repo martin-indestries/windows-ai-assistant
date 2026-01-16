@@ -17,6 +17,7 @@ from spectral.conversation_context import ConversationContext
 from spectral.execution_models import ExecutionMode
 from spectral.execution_router import ExecutionRouter
 from spectral.intent_classifier import IntentClassifier
+from spectral.llm_client import LLMClient
 from spectral.memory_models import ExecutionMemory
 from spectral.memory_reference_resolver import ReferenceResolver
 from spectral.memory_search import MemorySearch
@@ -112,10 +113,31 @@ class ChatSession:
         # Initialize conversation memory for context-aware responses
         if response_generator and hasattr(response_generator, "conversation_memory"):
             self.response_generator = response_generator
+
+            if not getattr(self.response_generator, "llm_client", None) and config:
+                try:
+                    self.response_generator.llm_client = LLMClient(config.llm)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to initialize LLM client; falling back to template responses: %s",
+                        e,
+                    )
         else:
             self.conversation_memory = ConversationContext()
+
+            llm_client = None
+            if config:
+                try:
+                    llm_client = LLMClient(config.llm)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to initialize LLM client; falling back to template responses: %s",
+                        e,
+                    )
+
             self.response_generator = response_generator or ResponseGenerator(
-                conversation_memory=self.conversation_memory
+                llm_client=llm_client,
+                conversation_memory=self.conversation_memory,
             )
 
         # Initialize memory search and reference resolver if memory module is available

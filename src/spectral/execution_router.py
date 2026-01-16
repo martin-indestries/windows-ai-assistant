@@ -133,6 +133,59 @@ class ExecutionRouter:
         input_lower = user_input.lower().strip()
         words = input_lower.split()
 
+        # EARLY EXIT: Exclude self-referential questions (about Spectral itself)
+        self_ref_patterns = [
+            "what is your",
+            "what are you",
+            "who are you",
+            "what can you",
+            "what do you",
+            "what's your",
+            "whats your",
+            "tell me about you",
+            "tell me about yourself",
+            "your name",
+        ]
+        if any(pattern in input_lower for pattern in self_ref_patterns):
+            logger.debug("Self-referential question detected, skipping research")
+            # Route to casual conversation (use direct mode with low confidence)
+            return ExecutionMode.DIRECT, 0.3
+
+        # EARLY EXIT: Exclude greetings and casual openers
+        greetings = [
+            "hello",
+            "hi",
+            "hey",
+            "greetings",
+            "good morning",
+            "good afternoon",
+            "good evening",
+            "whats up",
+            "what's up",
+            "sup",
+            "how are you",
+            "how are you doing",
+            "how do you do",
+            "what's good",
+            "whats good",
+        ]
+        # Check if input is primarily a greeting
+        if any(
+            greeting == input_lower or input_lower.startswith(greeting + " ")
+            for greeting in greetings
+        ):
+            logger.debug("Greeting detected, skipping research")
+            return ExecutionMode.DIRECT, 0.3
+
+        # EARLY EXIT: Very short inputs (< 4 words) unlikely to be research queries
+        # unless they contain strong technical keywords
+        if len(words) < 4:
+            strong_tech_keywords = ["error", "exception", "install", "setup", "configure", "deploy"]
+            has_strong_tech = any(keyword in input_lower for keyword in strong_tech_keywords)
+            if not has_strong_tech:
+                logger.debug("Short input without strong technical keywords, skipping research")
+                return ExecutionMode.DIRECT, 0.4
+
         # Count indicators for each mode
         direct_score = 0.0
         planning_score = 0.0

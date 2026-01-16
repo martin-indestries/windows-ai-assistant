@@ -322,6 +322,15 @@ class GUIApp(customtkinter.CTk):
             command: The command to process
         """
         try:
+            # Add AI: prefix before streaming response
+            def _add_ai_prefix() -> None:
+                self.chat_text.configure(state="normal")
+                self.chat_text.insert("end", "AI: ")
+                self.chat_text.see("end")
+                self.chat_text.configure(state="disabled")
+
+            self._run_on_ui_thread(_add_ai_prefix)
+
             # Stream command output
             for chunk in self.chat_session.process_command_stream(command):
                 chunk_str = str(chunk)
@@ -330,6 +339,15 @@ class GUIApp(customtkinter.CTk):
                     self._append_chat_message(text, is_streaming=True)
 
                 self._run_on_ui_thread(_append_chunk)
+
+            # Add newlines after response to separate conversation turns
+            def _add_separator() -> None:
+                self.chat_text.configure(state="normal")
+                self.chat_text.insert("end", "\n\n")
+                self.chat_text.see("end")
+                self.chat_text.configure(state="disabled")
+
+            self._run_on_ui_thread(_add_separator)
 
             def mark_complete() -> None:
                 self.plan_status.configure(text="Plan: Complete", text_color="green")
